@@ -39,12 +39,12 @@ Batch mode may still prefer a faster id (`re-batch-fast-v1`) that maps to the sa
 
 ## 2. Provider choice (recommended)
 
-### Primary: **Autoenhance.ai** (RE-native enhance API)
+### Primary: **OpenAI Images Edit** (RE-native enhance API)
 
 | | |
 |--|--|
 | Why | Built for real-estate photo enhancement (color, exposure, HDR merge). PropTech API path. |
-| Docs | https://www.autoenhance.ai/api · https://docs.autoenhance.ai |
+| Docs | https://www.openai.ai/api · https://docs.openai.ai |
 | Auth | `x-api-key` |
 | Flow | Upload → enhance job → poll/download enhanced (`GET /v3/images/{id}/enhanced`) |
 | Hard gate | **Disable restage / virtual staging / structural** options on every request. Prefer enhance-only. Reject responses that advertise restaged assets. |
@@ -58,7 +58,7 @@ Higher structural risk → mandatory QA diff gate (see §5).
 ### Fallback B: Client LUT (`clientLutEngine`)
 Current canvas path (`lut-natural-v1` / `lut-interior-warm` / `lut-exterior-sky` / `lut-batch-fast`). Always available offline / demos. Not the production grade for “professionally graded” listings.
 
-**Decision:** Ship Autoenhance as `cloud` `GradeEngine`; keep LUT as default until `AUTOENHANCE_API_KEY` is set.
+**Decision:** Ship Autoenhance as `cloud` `GradeEngine`; keep LUT as default until `OPENAI_API_KEY` is set.
 
 ---
 
@@ -107,8 +107,8 @@ Before `markGraded`:
 ## 6. Env
 
 ```bash
-AUTOENHANCE_API_KEY=         # enables cloud GradeEngine
-GRADE_ENGINE=autoenhance|lut # default: autoenhance if key else lut
+OPENAI_API_KEY=         # enables cloud GradeEngine
+GRADE_ENGINE=openai|lut # default: openai if key else lut
 GRADE_WEBHOOK_SECRET=        # later
 ```
 
@@ -118,7 +118,7 @@ GRADE_WEBHOOK_SECRET=        # later
 
 - [x] `GradeEngine` + `setGradeEngine` / `runGrade` facade (`src/lib/grade.ts`)
 - [x] Stub `POST/GET /api/grade` job queue
-- [ ] Wire Autoenhance upload + download client
+- [x] Wire OpenAI Images Edit client (`src/lib/openai-grade.ts`)
 - [ ] Persist job results to listing photo `gradedDataUrl` / S3
 - [ ] Capacitor path: same API (no canvas-only on device)
 - [ ] Credit cost tune after first 50 live enhances

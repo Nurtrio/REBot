@@ -12,7 +12,105 @@ import {
   SectionLabel,
 } from "@/components/ui";
 import { useAppStore } from "@/store/app-store";
-import { getGradeEngine, runGrade } from "@/lib/grade";
+import { runGrade } from "@/lib/grade";
+
+async function runProGradeViaApi(opts: {
+  listingId: string;
+  mode: "single" | "batch";
+  skyPolish: boolean;
+  photos: { photoId: string; room?: RoomType; sourceUrl?: string }[];
+}): Promise<{
+  engine: string;
+  results: {
+    photoId: string;
+    ok: boolean;
+    model: string;
+    gradedDataUrl?: string;
+    gradedThumbKey: string;
+    error?: string;
+  }[];
+}> {
+  const post = await fetch("/api/grade", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      listingId: opts.listingId,
+      mode: opts.mode,
+      skyPolish: opts.skyPolish,
+      photos: opts.photos,
+    }),
+  });
+  if (!post.ok) {
+    throw new Error("Failed to start grade job");
+  }
+  const started = (await post.json()) as { jobId: string; engine: string };
+
+  // LUT fallback: run client engine locally
+  if (started.engine === "lut-fallback") {
+    const photoIds = opts.photos.map((p) => p.photoId);
+    const rooms: Record<string, RoomType> = {};
+    const sources: Record<string, string | undefined> = {};
+    opts.photos.forEach((p) => {
+      if (p.room) rooms[p.photoId] = p.room;
+      sources[p.photoId] = p.sourceUrl;
+    });
+    const lut = await runGrade({
+      photoIds,
+      mode: opts.mode,
+      skyPolish: opts.skyPolish,
+      rooms,
+      sources,
+    });
+    return {
+      engine: "lut-fallback",
+      results: lut.map((r) => ({
+        photoId: r.photoId,
+        ok: r.ok,
+        model: r.model,
+        gradedDataUrl: r.gradedDataUrl,
+        gradedThumbKey: r.gradedThumbKey,
+        error: r.error,
+      })),
+    };
+  }
+
+  // Poll OpenAI / cloud job
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1200));
+    const poll = await fetch(`/api/grade?jobId=${encodeURIComponent(started.jobId)}`);
+    if (!poll.ok) throw new Error("Grade poll failed");
+    const job = (await poll.json()) as {
+      status: string;
+      engine: string;
+      error?: string;
+      results?: {
+        photoId: string;
+        ok: boolean;
+        model: string;
+        gradedUrl?: string;
+        error?: string;
+      }[];
+    };
+    if (job.status === "failed") {
+      throw new Error(job.error || "Grade job failed");
+    }
+    if (job.status === "done" && job.results) {
+      return {
+        engine: job.engine,
+        results: job.results.map((r) => ({
+          photoId: r.photoId,
+          ok: r.ok,
+          model: r.model,
+          gradedDataUrl: r.gradedUrl,
+          gradedThumbKey: `graded-${r.photoId}`,
+          error: r.error,
+        })),
+      };
+    }
+  }
+  throw new Error("Grade timed out");
+}
 import { BURN } from "@/data/plans";
 import type { RoomType } from "@/types";
 
@@ -42,8 +140,8 @@ export default function GradePage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [doneIds, setDoneIds] = useState<string[]>([]);
   const [lastModels, setLastModels] = useState<string[]>([]);
+  const [engineKind, setEngineKind] = useState<string>("client LUT");
   const compareRef = useRef<HTMLDivElement>(null);
-  const engineKind = getGradeEngine().kind;
 
   function setSliderFromClientX(clientX: number) {
     const el = compareRef.current;
@@ -84,23 +182,18 @@ export default function GradePage() {
 
     setBusy(true);
     try {
-      const rooms: Record<string, RoomType> = {};
-      const sources: Record<string, string | undefined> = {};
-      targets.forEach((pid) => {
-        const p = photos.find((x) => x.id === pid);
-        if (p) {
-          rooms[pid] = p.room;
-          sources[pid] = p.dataUrl;
-        }
+      const apiPhotos = targets.map((pid) => {
+        const p = photos.find((x) => x.id === pid)!;
+        return { photoId: pid, room: p.room, sourceUrl: p.dataUrl };
       });
 
-      const results = await runGrade({
-        photoIds: targets,
+      const { engine, results } = await runProGradeViaApi({
+        listingId: id,
         mode,
         skyPolish,
-        rooms,
-        sources,
+        photos: apiPhotos,
       });
+      setEngineKind(engine === "openai" ? "OpenAI pro" : "client LUT");
 
       const okResults = results.filter((r) => r.ok);
       const failResults = results.filter((r) => !r.ok);
@@ -279,7 +372,7 @@ export default function GradePage() {
               disabled={!showAfter}
             />
             <p className="mt-1 text-xs text-muted">
-              Engine: {engineKind === "cloud" ? "cloud pro" : "client LUT"}
+              Engine: {engineKind}
               {active.gradeModel ? ` · ${active.gradeModel}` : ""}
               {" · "}drag compare or use slider
             </p>
