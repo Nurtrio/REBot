@@ -51,7 +51,12 @@ interface AppState {
   getPhotos: (listingId: string) => Photo[];
   updateListingStatus: (id: string, status: Listing["status"]) => void;
   setGalleryOrder: (listingId: string, order: string[]) => void;
-  addPhoto: (listingId: string, room: RoomType, angleLabel: string) => string;
+  addPhoto: (
+    listingId: string,
+    room: RoomType,
+    angleLabel: string,
+    opts?: { flags?: Photo["flags"]; dataUrl?: string }
+  ) => string;
   togglePhotoSelect: (photoId: string) => void;
   setPhotoFlags: (photoId: string, flags: Photo["flags"]) => void;
   markGraded: (photoIds: string[], gradedKeys: Record<string, string>) => void;
@@ -181,7 +186,7 @@ export const useAppStore = create<AppState>()(
           ),
         })),
 
-      addPhoto: (listingId, room, angleLabel) => {
+      addPhoto: (listingId, room, angleLabel, opts) => {
         const id = uid("ph");
         const photo: Photo = {
           id,
@@ -190,8 +195,9 @@ export const useAppStore = create<AppState>()(
           angleLabel,
           capturedAt: new Date().toISOString(),
           status: "raw",
-          flags: ["level_ok"],
+          flags: opts?.flags?.length ? opts.flags : ["level_ok"],
           thumbKey: `${room}-${Date.now()}`,
+          dataUrl: opts?.dataUrl,
         };
         set((s) => ({
           photos: [...s.photos, photo],

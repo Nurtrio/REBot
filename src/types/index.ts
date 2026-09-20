@@ -20,8 +20,10 @@ export interface Photo {
   capturedAt: string;
   status: PhotoStatus;
   flags: PhotoFlag[];
-  /** Placeholder gradient / mock image key */
+  /** Placeholder gradient key, or data: URL from live capture */
   thumbKey: string;
+  /** Live capture still (data URL); preferred over gradient thumb when set */
+  dataUrl?: string;
   gradedThumbKey?: string;
 }
 

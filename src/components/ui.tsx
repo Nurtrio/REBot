@@ -177,18 +177,21 @@ export function SoftUpsellChip({
   );
 }
 
-/** Abstract room thumb — no stock photos needed */
+/** Room thumb — live capture data URL when present, else abstract gradient */
 export function PhotoThumb({
   thumbKey,
+  dataUrl,
   graded,
   selected,
   className = "",
 }: {
   thumbKey: string;
+  dataUrl?: string;
   graded?: boolean;
   selected?: boolean;
   className?: string;
 }) {
+  const src = dataUrl && dataUrl.startsWith("data:") ? dataUrl : undefined;
   const hue =
     Math.abs(
       thumbKey.split("").reduce((a, c) => a + c.charCodeAt(0), 0)
@@ -197,18 +200,32 @@ export function PhotoThumb({
   return (
     <div
       className={`relative overflow-hidden bg-[#2a2824] ${className}`}
-      style={{
-        background: graded
-          ? `linear-gradient(145deg, hsl(${28 + hue} 22% ${base}%) 0%, hsl(${18 + hue} 18% 22%) 100%)`
-          : `linear-gradient(160deg, hsl(${36 + hue} 12% ${base}%) 0%, hsl(${24 + hue} 10% 18%) 100%)`,
-      }}
+      style={
+        src
+          ? undefined
+          : {
+              background: graded
+                ? `linear-gradient(145deg, hsl(${28 + hue} 22% ${base}%) 0%, hsl(${18 + hue} 18% 22%) 100%)`
+                : `linear-gradient(160deg, hsl(${36 + hue} 12% ${base}%) 0%, hsl(${24 + hue} 10% 18%) 100%)`,
+            }
+      }
     >
-      <div className="absolute inset-0 opacity-30 mix-blend-overlay"
-        style={{
-          backgroundImage:
-            "radial-gradient(circle at 30% 20%, rgba(255,255,255,.25), transparent 50%)",
-        }}
-      />
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          className={`absolute inset-0 h-full w-full object-cover ${graded ? "contrast-110 saturate-110" : ""}`}
+        />
+      ) : (
+        <div
+          className="absolute inset-0 opacity-30 mix-blend-overlay"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 30% 20%, rgba(255,255,255,.25), transparent 50%)",
+          }}
+        />
+      )}
       {selected ? (
         <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-[10px] text-paper">
           ✓
