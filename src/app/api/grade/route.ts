@@ -5,6 +5,8 @@ import {
   modelIdFor,
   packForRoom,
 } from "@/lib/openai-grade";
+import { structuralQa } from "@/lib/grade-qa";
+import { estimateGradeCost, qualityForMode } from "@/lib/grade-cost";
 
 /**
  * Pro grade job queue.
@@ -34,6 +36,8 @@ export interface GradeJobResultItem {
   pack: "interior" | "exterior";
   gradedUrl?: string;
   error?: string;
+  structuralScore?: number;
+  structuralDetail?: string;
 }
 
 interface GradeJob {
@@ -45,6 +49,7 @@ interface GradeJob {
   engine: "openai" | "lut-fallback";
   results?: GradeJobResultItem[];
   error?: string;
+  costEstimate?: ReturnType<typeof estimateGradeCost>;
 }
 
 declare global {
@@ -97,12 +102,37 @@ async function processJob(job: GradeJob) {
             skyPolish: !!job.request.skyPolish,
             quality,
           });
+          if (!p.sourceUrl) {
+            results.push({
+              photoId: p.photoId,
+              ok: false,
+              model,
+              pack,
+              error: "missing source for structural QA",
+            });
+            continue;
+          }
+          const qa = await structuralQa(p.sourceUrl, gradedUrl);
+          if (!qa.pass) {
+            results.push({
+              photoId: p.photoId,
+              ok: false,
+              model,
+              pack,
+              structuralScore: qa.score,
+              structuralDetail: qa.detail,
+              error: qa.detail,
+            });
+            continue;
+          }
           results.push({
             photoId: p.photoId,
             ok: true,
             model,
             pack,
             gradedUrl,
+            structuralScore: qa.score,
+            structuralDetail: qa.detail,
           });
         } catch (e) {
           results.push({
@@ -156,6 +186,12 @@ export async function POST(req: NextRequest) {
   const skyPolish = Boolean(body.skyPolish);
   const engine = hasOpenAIKey() ? "openai" : "lut-fallback";
 
+  const costEstimate = estimateGradeCost({
+    photos: body.photos.length,
+    mode: body.mode === "batch" ? "batch" : "single",
+    fwCredits: body.photos.length, // client sends true cost separately; floor = 1/photo
+  });
+
   const job: GradeJob = {
     id: uid(),
     status: "queued",
@@ -163,6 +199,7 @@ export async function POST(req: NextRequest) {
     updatedAt: new Date().toISOString(),
     request: { ...body, skyPolish },
     engine,
+    costEstimate,
   };
   jobs().set(job.id, job);
   void processJob(job);
@@ -172,11 +209,14 @@ export async function POST(req: NextRequest) {
       jobId: job.id,
       status: job.status,
       engine: job.engine,
+      costEstimate,
+      quality: qualityForMode(body.mode === "batch" ? "batch" : "single"),
       policy: {
         structuralEdits: false,
         virtualStaging: false,
         skyPolishOptIn: skyPolish,
         mlsDisclosureRequired: skyPolish,
+        structuralQa: true,
         provider: engine === "openai" ? "openai-images-edits" : "client-lut",
       },
       hint:
@@ -203,6 +243,7 @@ export async function GET(req: NextRequest) {
     engine: job.engine,
     results: job.results,
     error: job.error,
+    costEstimate: job.costEstimate,
     updatedAt: job.updatedAt,
   });
 }

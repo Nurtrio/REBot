@@ -137,3 +137,9 @@ GRADE_WEBHOOK_SECRET=        # later
 | Failed job | 0 (refund) | correction ledger |
 
 Target: keep agent cost **well below** traditional listing photographer edit fees while looking pro on iPhone Safari / PWA.
+
+
+## 9. Structural QA + batch cost watch
+
+- After OpenAI edit, `structuralQa` (`src/lib/grade-qa.ts`) compares luma edge maps (Sobel + Pearson). Fail closed if correlation &lt; `0.72` — frame is not marked graded; credits refunded for that frame.
+- `estimateGradeCost` (`src/lib/grade-cost.ts`) surfaces OpenAI USD vs FW credit yield on the Grade screen and on `/api/grade` responses. Batch uses `quality: low`. Warn when batch ≥ 20 or COGS ratio &gt; 1.25.

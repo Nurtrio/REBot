@@ -21,6 +21,7 @@ async function runProGradeViaApi(opts: {
   photos: { photoId: string; room?: RoomType; sourceUrl?: string }[];
 }): Promise<{
   engine: string;
+  costEstimate?: ReturnType<typeof estimateGradeCost>;
   results: {
     photoId: string;
     ok: boolean;
@@ -28,6 +29,7 @@ async function runProGradeViaApi(opts: {
     gradedDataUrl?: string;
     gradedThumbKey: string;
     error?: string;
+    structuralScore?: number;
   }[];
 }> {
   const post = await fetch("/api/grade", {
@@ -43,7 +45,11 @@ async function runProGradeViaApi(opts: {
   if (!post.ok) {
     throw new Error("Failed to start grade job");
   }
-  const started = (await post.json()) as { jobId: string; engine: string };
+  const started = (await post.json()) as {
+    jobId: string;
+    engine: string;
+    costEstimate?: ReturnType<typeof estimateGradeCost>;
+  };
 
   // LUT fallback: run client engine locally
   if (started.engine === "lut-fallback") {
@@ -63,6 +69,7 @@ async function runProGradeViaApi(opts: {
     });
     return {
       engine: "lut-fallback",
+      costEstimate: started.costEstimate,
       results: lut.map((r) => ({
         photoId: r.photoId,
         ok: r.ok,
@@ -90,7 +97,9 @@ async function runProGradeViaApi(opts: {
         model: string;
         gradedUrl?: string;
         error?: string;
+        structuralScore?: number;
       }[];
+      costEstimate?: ReturnType<typeof estimateGradeCost>;
     };
     if (job.status === "failed") {
       throw new Error(job.error || "Grade job failed");
@@ -98,6 +107,7 @@ async function runProGradeViaApi(opts: {
     if (job.status === "done" && job.results) {
       return {
         engine: job.engine,
+        costEstimate: job.costEstimate ?? started.costEstimate,
         results: job.results.map((r) => ({
           photoId: r.photoId,
           ok: r.ok,
@@ -105,6 +115,7 @@ async function runProGradeViaApi(opts: {
           gradedDataUrl: r.gradedUrl,
           gradedThumbKey: `graded-${r.photoId}`,
           error: r.error,
+          structuralScore: r.structuralScore,
         })),
       };
     }
@@ -112,6 +123,7 @@ async function runProGradeViaApi(opts: {
   throw new Error("Grade timed out");
 }
 import { BURN } from "@/data/plans";
+import { estimateGradeCost } from "@/lib/grade-cost";
 import type { RoomType } from "@/types";
 
 export default function GradePage() {
@@ -161,6 +173,16 @@ export default function GradePage() {
   const gradeCost = costFn(targets, mode === "batch");
   const skyCost = skyPolish ? targets.length * BURN.skyPolish : 0;
   const cost = gradeCost + skyCost;
+  const liveCost = useMemo(
+    () =>
+      estimateGradeCost({
+        photos: targets.length,
+        mode,
+        fwCredits: cost || targets.length,
+      }),
+    [targets.length, mode, cost]
+  );
+
 
   async function confirmGrade() {
     setMsg(null);
@@ -187,7 +209,7 @@ export default function GradePage() {
         return { photoId: pid, room: p.room, sourceUrl: p.dataUrl };
       });
 
-      const { engine, results } = await runProGradeViaApi({
+      const { engine, results, costEstimate } = await runProGradeViaApi({
         listingId: id,
         mode,
         skyPolish,
@@ -200,7 +222,14 @@ export default function GradePage() {
 
       if (failResults.length === results.length) {
         refundGradeJob(gradeCost, skyCost, id, "all grades failed — refund");
-        setMsg("Grade failed — credits refunded.");
+        const allStructural = failResults.every(
+          (r) => r.error && /structural/i.test(r.error)
+        );
+        setMsg(
+          allStructural
+            ? "Blocked by structural QA — credits refunded. Try LUT or re-shoot."
+            : "Grade failed — credits refunded."
+        );
         return;
       }
 
@@ -215,6 +244,10 @@ export default function GradePage() {
           `${failN} frame(s) failed — partial refund`
         );
       }
+
+      const structuralFails = failResults.filter(
+        (r) => r.error && /structural/i.test(r.error)
+      );
 
       const keys: Record<string, string> = {};
       const urls: Record<string, string> = {};
@@ -233,11 +266,21 @@ export default function GradePage() {
       setDoneIds(okResults.map((r) => r.photoId));
       setLastModels(Array.from(new Set(okResults.map((r) => r.model))));
       if (okResults[0]) setActiveId(okResults[0].photoId);
-      setMsg(
-        skyPolish
-          ? "Graded with sky polish — MLS disclosure flagged on listing."
-          : `Natural grade applied (${Array.from(new Set(okResults.map((r) => r.model))).join(", ")}). Architecture preserved.`
-      );
+      const modelLabel = Array.from(
+        new Set(okResults.map((r) => r.model))
+      ).join(", ");
+      let nextMsg = skyPolish
+        ? "Graded with sky polish — MLS disclosure flagged on listing."
+        : `Natural grade applied (${modelLabel}). Architecture preserved.`;
+      if (structuralFails.length) {
+        nextMsg += ` ${structuralFails.length} blocked by structural QA.`;
+      } else if (failResults.length) {
+        nextMsg += ` ${failResults.length} failed (refunded).`;
+      }
+      if (costEstimate?.warn && costEstimate.warnReason) {
+        nextMsg += ` Cost watch: ${costEstimate.warnReason}`;
+      }
+      setMsg(nextMsg);
     } catch {
       refundGradeJob(gradeCost, skyCost, id, "grade crashed — refund");
       setMsg("Grade crashed — credits refunded.");
@@ -426,6 +469,19 @@ export default function GradePage() {
         </label>
 
         <ConfirmCost cost={cost} balance={balance} />
+        {targets.length > 0 && liveCost.openaiUsd > 0 ? (
+          <p
+            className={`text-xs ${
+              liveCost.warn ? "text-warn" : "text-muted"
+            }`}
+          >
+            OpenAI est. ~${liveCost.openaiUsd.toFixed(2)} ({liveCost.quality}
+            ) · FW yield ~${liveCost.fwUsdEquiv.toFixed(2)}
+            {liveCost.warn && liveCost.warnReason
+              ? ` · ${liveCost.warnReason}`
+              : ""}
+          </p>
+        ) : null}
 
         {msg ? (
           <p
