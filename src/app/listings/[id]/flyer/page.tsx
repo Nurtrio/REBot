@@ -12,6 +12,8 @@ import {
 } from "@/components/ui";
 import { FLYER_TEMPLATES, BURN, OPEN_HOUSE_PACK_IDS } from "@/data/plans";
 import { useAppStore } from "@/store/app-store";
+import { useClientReady } from "@/hooks/use-client-ready";
+import { useListing } from "@/hooks/use-listing-store";
 import { formatListingPrice } from "@/lib/credits";
 import {
   canShareFiles,
@@ -24,7 +26,8 @@ import type { FlyerTemplateId } from "@/types";
 export default function FlyerPage() {
   const params = useParams();
   const id = params.id as string;
-  const listing = useAppStore((s) => s.getListing(id));
+  const listing = useListing(id);
+  const ready = useClientReady();
   const agent = useAppStore((s) => s.agent);
   const balance = useAppStore((s) => s.balance());
   const canAfford = useAppStore((s) => s.canAfford);
@@ -64,6 +67,12 @@ export default function FlyerPage() {
   useEffect(() => {
     setShareCapable(canShareFiles());
   }, []);
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
+  }
 
   if (!listing) {
     return (

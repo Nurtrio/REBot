@@ -6,16 +6,15 @@
 export type GradeQuality = "low" | "medium" | "high";
 
 /** Approx USD per gpt-image edit (working). Override via env if needed. */
+// Client-safe defaults (server API may override via its own env reads).
 export const OPENAI_USD_PER_EDIT: Record<GradeQuality, number> = {
-  low: Number(process.env.OPENAI_GRADE_USD_LOW || 0.02),
-  medium: Number(process.env.OPENAI_GRADE_USD_MEDIUM || 0.07),
-  high: Number(process.env.OPENAI_GRADE_USD_HIGH || 0.19),
+  low: 0.02,
+  medium: 0.07,
+  high: 0.19,
 };
 
 /** Assumed revenue per Framewalk grade credit (Starter ~$29/120 ≈ $0.24). */
-export const FW_USD_PER_CREDIT = Number(
-  process.env.FW_USD_PER_CREDIT || (29 / 120).toFixed(4)
-);
+export const FW_USD_PER_CREDIT = Number((29 / 120).toFixed(4));
 
 export function qualityForMode(mode: "single" | "batch"): GradeQuality {
   return mode === "batch" ? "low" : "medium";

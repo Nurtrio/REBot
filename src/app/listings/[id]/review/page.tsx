@@ -10,6 +10,8 @@ import {
   SectionLabel,
 } from "@/components/ui";
 import { useAppStore } from "@/store/app-store";
+import { useClientReady } from "@/hooks/use-client-ready";
+import { useListing, useListingPhotos } from "@/hooks/use-listing-store";
 
 const flagLabel: Record<string, string> = {
   blur: "Blur",
@@ -21,11 +23,18 @@ const flagLabel: Record<string, string> = {
 export default function ReviewPage() {
   const params = useParams();
   const id = params.id as string;
-  const listing = useAppStore((s) => s.getListing(id));
-  const photos = useAppStore((s) => s.getPhotos(id));
+  const listing = useListing(id);
+  const ready = useClientReady();
+  const photos = useListingPhotos(id);
   const toggle = useAppStore((s) => s.togglePhotoSelect);
   const balance = useAppStore((s) => s.balance());
   const costFn = useAppStore((s) => s.gradeCostForSelection);
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
+  }
 
   if (!listing) {
     return (

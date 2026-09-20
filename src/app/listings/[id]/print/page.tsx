@@ -14,13 +14,16 @@ import {
 import { BURN } from "@/data/plans";
 import { findPrintShops, mapsSearchUrl } from "@/lib/print-shops";
 import { useAppStore } from "@/store/app-store";
+import { useClientReady } from "@/hooks/use-client-ready";
+import { useListing, useListingPhotos } from "@/hooks/use-listing-store";
 import type { PrintShop } from "@/types";
 
 export default function PrintPage() {
   const params = useParams();
   const id = params.id as string;
-  const listing = useAppStore((s) => s.getListing(id));
-  const photos = useAppStore((s) => s.getPhotos(id));
+  const listing = useListing(id);
+  const ready = useClientReady();
+  const photos = useListingPhotos(id);
   const balance = useAppStore((s) => s.balance());
   const canAfford = useAppStore((s) => s.canAfford);
   const burn = useAppStore((s) => s.burn);
@@ -39,6 +42,12 @@ export default function PrintPage() {
   const [prepMsg, setPrepMsg] = useState<string | null>(null);
 
   const prepCost = selected.length * BURN.heroUpscale;
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
+  }
 
   if (!listing) {
     return (

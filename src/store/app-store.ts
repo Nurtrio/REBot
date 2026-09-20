@@ -393,7 +393,13 @@ export const useAppStore = create<AppState>()(
         monthlyGrant: s.monthlyGrant,
         ledger: s.ledger,
         listings: s.listings,
-        photos: s.photos,
+        // Drop data URLs — they blow iOS Safari localStorage quota and crash persist writes
+        photos: s.photos.map((ph) => {
+          const rest = { ...ph };
+          delete rest.dataUrl;
+          delete rest.gradedDataUrl;
+          return rest;
+        }),
         softUpsellDismissed: s.softUpsellDismissed,
         ohPackBoughtFor: s.ohPackBoughtFor,
       }),

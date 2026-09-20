@@ -5,6 +5,7 @@ import { CreditPill, SectionLabel, Button } from "@/components/ui";
 import { useAppStore } from "@/store/app-store";
 import { formatListingPrice } from "@/lib/credits";
 import { PLANS } from "@/data/plans";
+import { useClientReady } from "@/hooks/use-client-ready";
 
 const statusLabel: Record<string, string> = {
   draft: "Draft",
@@ -22,10 +23,17 @@ export default function HomePage() {
   const usageRatio = useAppStore((s) => s.usageRatio());
   const softUpsellDismissed = useAppStore((s) => s.softUpsellDismissed);
   const dismissSoftUpsell = useAppStore((s) => s.dismissSoftUpsell);
-  const plan = PLANS.find((p) => p.id === planId)!;
+  const ready = useClientReady();
+  const plan = PLANS.find((p) => p.id === planId) ?? PLANS[0];
   const showSoft = usageRatio >= 0.8 && !softUpsellDismissed;
   const nextName =
     planId === "starter" ? "Pro" : planId === "pro" ? "Team" : null;
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
+  }
 
   return (
     <main>

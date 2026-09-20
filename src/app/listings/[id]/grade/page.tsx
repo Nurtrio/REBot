@@ -12,7 +12,12 @@ import {
   SectionLabel,
 } from "@/components/ui";
 import { useAppStore } from "@/store/app-store";
+import { useClientReady } from "@/hooks/use-client-ready";
+import { useListing, useListingPhotos } from "@/hooks/use-listing-store";
 import { runGrade } from "@/lib/grade";
+import { BURN } from "@/data/plans";
+import { estimateGradeCost } from "@/lib/grade-cost";
+import type { RoomType } from "@/types";
 
 async function runProGradeViaApi(opts: {
   listingId: string;
@@ -122,15 +127,12 @@ async function runProGradeViaApi(opts: {
   }
   throw new Error("Grade timed out");
 }
-import { BURN } from "@/data/plans";
-import { estimateGradeCost } from "@/lib/grade-cost";
-import type { RoomType } from "@/types";
-
 export default function GradePage() {
   const params = useParams();
   const id = params.id as string;
-  const listing = useAppStore((s) => s.getListing(id));
-  const photos = useAppStore((s) => s.getPhotos(id));
+  const listing = useListing(id);
+  const ready = useClientReady();
+  const photos = useListingPhotos(id);
   const balance = useAppStore((s) => s.balance());
   const canAfford = useAppStore((s) => s.canAfford);
   const burnGradeJob = useAppStore((s) => s.burnGradeJob);
@@ -295,6 +297,12 @@ export default function GradePage() {
     rejectGrade(ids);
     setDoneIds([]);
     setMsg("Rejected — frames back in Selected for redo. Credits stay burned (re-grade will charge again).");
+  }
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
   }
 
   if (!listing) {

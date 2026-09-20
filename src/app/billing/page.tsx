@@ -16,7 +16,7 @@ export default function BillingPage() {
   const softUpsellDismissed = useAppStore((s) => s.softUpsellDismissed);
   const dismissSoftUpsell = useAppStore((s) => s.dismissSoftUpsell);
 
-  const plan = PLANS.find((p) => p.id === planId)!;
+  const plan = PLANS.find((p) => p.id === planId) ?? PLANS[0];
   const usagePct = Math.min(100, Math.round(usageRatio * 100));
   const showSoftUpsell = usageRatio >= 0.8 && !softUpsellDismissed;
   const nextPlan =

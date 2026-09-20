@@ -12,6 +12,8 @@ import {
 } from "@/components/ui";
 import { ROOM_ORDER } from "@/data/seed";
 import { useAppStore } from "@/store/app-store";
+import { useClientReady } from "@/hooks/use-client-ready";
+import { useListing, useListingPhotos } from "@/hooks/use-listing-store";
 import type { Photo } from "@/types";
 
 function autoOrder(photos: Photo[]): string[] {
@@ -38,8 +40,9 @@ function autoOrder(photos: Photo[]): string[] {
 export default function GalleryPage() {
   const params = useParams();
   const id = params.id as string;
-  const listing = useAppStore((s) => s.getListing(id));
-  const photos = useAppStore((s) => s.getPhotos(id));
+  const listing = useListing(id);
+  const ready = useClientReady();
+  const photos = useListingPhotos(id);
   const setGalleryOrder = useAppStore((s) => s.setGalleryOrder);
   const balance = useAppStore((s) => s.balance());
 
@@ -50,6 +53,12 @@ export default function GalleryPage() {
 
   const [order, setOrder] = useState<string[]>(initial);
   const [saved, setSaved] = useState(false);
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
+  }
 
   if (!listing) {
     return (

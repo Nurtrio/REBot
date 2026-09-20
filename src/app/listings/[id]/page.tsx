@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ScreenHeader, CreditPill, Button, SectionLabel } from "@/components/ui";
 import { useAppStore } from "@/store/app-store";
+import { useClientReady } from "@/hooks/use-client-ready";
+import { useListing, useListingPhotos } from "@/hooks/use-listing-store";
 import { formatListingPrice } from "@/lib/credits";
 
 const links = [
@@ -18,9 +20,16 @@ const links = [
 export default function ListingHubPage() {
   const params = useParams();
   const id = params.id as string;
-  const listing = useAppStore((s) => s.getListing(id));
-  const photos = useAppStore((s) => s.getPhotos(id));
+  const listing = useListing(id);
+  const ready = useClientReady();
+  const photos = useListingPhotos(id);
   const balance = useAppStore((s) => s.balance());
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
+  }
 
   if (!listing) {
     return (

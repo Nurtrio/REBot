@@ -4,8 +4,10 @@ import { SoftUpsellChip } from "@/components/ui";
 import { useAppStore } from "@/store/app-store";
 import { PLANS } from "@/data/plans";
 import { usePathname } from "next/navigation";
+import { useClientReady } from "@/hooks/use-client-ready";
 
 export function SoftUpsellHost() {
+  const ready = useClientReady();
   const pathname = usePathname();
   const balance = useAppStore((s) => s.balance());
   const monthlyGrant = useAppStore((s) => s.monthlyGrant);
@@ -13,6 +15,7 @@ export function SoftUpsellHost() {
   const dismissed = useAppStore((s) => s.softUpsellDismissed);
   const dismiss = useAppStore((s) => s.dismissSoftUpsell);
 
+  if (!ready) return null;
   if (dismissed) return null;
   if (pathname === "/billing") return null;
   if (pathname?.includes("/shoot")) return null;

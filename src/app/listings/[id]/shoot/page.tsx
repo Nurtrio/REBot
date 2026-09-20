@@ -7,6 +7,8 @@ import { useParams } from "next/navigation";
 import { ROOM_COACH, ROOM_ORDER } from "@/data/seed";
 import { guideForChip } from "@/lib/shoot-guides";
 import { useAppStore } from "@/store/app-store";
+import { useClientReady } from "@/hooks/use-client-ready";
+import { useListing, useListingPhotos } from "@/hooks/use-listing-store";
 import type { PhotoFlag, RoomType } from "@/types";
 
 type MotionState = "unknown" | "needs_permission" | "live" | "mock";
@@ -94,9 +96,10 @@ async function attachStream(
 export default function ShootPage() {
   const params = useParams();
   const id = params.id as string;
-  const listing = useAppStore((s) => s.getListing(id));
+  const listing = useListing(id);
+  const ready = useClientReady();
   const addPhoto = useAppStore((s) => s.addPhoto);
-  const photos = useAppStore((s) => s.getPhotos(id));
+  const photos = useListingPhotos(id);
 
   const [room, setRoom] = useState<RoomType>("living");
   const [chipIdx, setChipIdx] = useState(0);
@@ -297,6 +300,12 @@ export default function ShootPage() {
     addPhoto(id, room, chip, { flags, dataUrl });
     setChipIdx((i) => i + 1);
   }, [addPhoto, id, room, chip, cameraMode]);
+
+  if (!ready) {
+    return (
+      <main className="px-4 py-8 text-sm text-muted">Loading…</main>
+    );
+  }
 
   if (!listing) {
     return (
