@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Design tokens — Framewalk editorial */
+  --fw-paper: #f7f4ef;
+  --fw-paper-raised: #fffcf7;
+  --fw-ink: #1a1a18;
+  --fw-ink-soft: #3d3c38;
+  --fw-muted: #6b6a64;
+  --fw-faint: #9c9a92;
+  --fw-line: #e5e1d8;
+  --fw-line-strong: #d0cbc0;
+  --fw-accent: #c45c26;
+  --fw-accent-hover: #a84c1e;
+  --fw-accent-soft: #f3e6dc;
+  --fw-level: #2d6a4f;
+  --fw-level-soft: #d8ebe1;
+  --fw-warn: #b45309;
+  --fw-warn-soft: #fef3c7;
+  --fw-danger: #9b2c2c;
+  --fw-danger-soft: #fde8e8;
+  --fw-radius: 12px;
+  --fw-radius-sm: 8px;
+  --fw-shadow: 0 1px 2px rgba(26, 26, 24, 0.04), 0 8px 24px rgba(26, 26, 24, 0.06);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html,
+body {
+  background: var(--fw-paper);
+  color: var(--fw-ink);
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.font-display {
+  font-family: var(--font-newsreader), Georgia, serif;
+  font-feature-settings: "ss01" on;
+}
+
+@layer utilities {
+  .fw-shell {
+    @apply mx-auto w-full max-w-[430px] min-h-[100dvh] relative;
+  }
+  .fw-card {
+    background: var(--fw-paper-raised);
+    border: 1px solid var(--fw-line);
+    border-radius: var(--fw-radius);
+    box-shadow: var(--fw-shadow);
+  }
+  .fw-hairline {
+    border-color: var(--fw-line);
+  }
+}
+
+/* Before/after slider range */
+input[type="range"].fw-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2px;
+  background: var(--fw-line-strong);
+  border-radius: 1px;
+  outline: none;
+}
+input[type="range"].fw-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--fw-ink);
+  border: 2px solid var(--fw-paper);
+  cursor: ew-resize;
+  box-shadow: var(--fw-shadow);
+}
+
+/* PWA install friendly */
+@media (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top);
+  }
+}
