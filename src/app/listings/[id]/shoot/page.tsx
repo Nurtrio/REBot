@@ -10,16 +10,27 @@ import { useAppStore } from "@/store/app-store";
 import type { PhotoFlag, RoomType } from "@/types";
 
 type MotionState = "unknown" | "needs_permission" | "live" | "mock";
+type CamState = "idle" | "pending" | "live" | "mock" | "denied";
+
+function isIOSPermissionAPI(): boolean {
+  if (typeof window === "undefined") return false;
+  const DOE = window.DeviceOrientationEvent as
+    | (typeof DeviceOrientationEvent & {
+        requestPermission?: () => Promise<"granted" | "denied">;
+      })
+    | undefined;
+  return typeof DOE?.requestPermission === "function";
+}
 
 function grabFrame(
   video: HTMLVideoElement | null,
-  cameraMode: "live" | "mock" | "pending",
+  cameraMode: CamState,
   room: string,
   chip: string
 ): string | undefined {
   const canvas = document.createElement("canvas");
-  const w = 960;
-  const h = 720;
+  const w = 1280;
+  const h = 960;
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
@@ -35,7 +46,6 @@ function grabFrame(
     const sy = (vh - sh) / 2;
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
   } else {
-    // Quiet mock still — charcoal room with label, not AI slop
     const g = ctx.createLinearGradient(0, 0, w, h);
     g.addColorStop(0, "#3a342c");
     g.addColorStop(0.5, "#1c1a17");
@@ -54,9 +64,30 @@ function grabFrame(
   }
 
   try {
-    return canvas.toDataURL("image/jpeg", 0.82);
+    return canvas.toDataURL("image/jpeg", 0.85);
   } catch {
     return undefined;
+  }
+}
+
+async function attachStream(
+  video: HTMLVideoElement,
+  stream: MediaStream
+): Promise<void> {
+  video.setAttribute("playsinline", "true");
+  video.setAttribute("webkit-playsinline", "true");
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = stream;
+  try {
+    await video.play();
+  } catch {
+    // iOS sometimes needs a second play after metadata
+    await new Promise<void>((r) => {
+      video.onloadedmetadata = () => {
+        void video.play().finally(() => r());
+      };
+    });
   }
 }
 
@@ -70,60 +101,78 @@ export default function ShootPage() {
   const [room, setRoom] = useState<RoomType>("living");
   const [chipIdx, setChipIdx] = useState(0);
   const [levelDeg, setLevelDeg] = useState(0);
-  const [cameraMode, setCameraMode] = useState<"live" | "mock" | "pending">(
-    "pending"
-  );
+  const [cameraMode, setCameraMode] = useState<CamState>("idle");
   const [motion, setMotion] = useState<MotionState>("unknown");
   const [flash, setFlash] = useState(false);
+  const [standalone, setStandalone] = useState(false);
+  const [camError, setCamError] = useState<string | null>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const levelDegRef = useRef(0);
   const motionLiveRef = useRef(false);
+  const orientHandlerRef = useRef<((e: DeviceOrientationEvent) => void) | null>(
+    null
+  );
+  const driftIvRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const coach = ROOM_COACH[room];
   const chip = coach.chips[chipIdx % coach.chips.length];
   const guide = useMemo(() => guideForChip(chip), [chip]);
   const isLevel = Math.abs(levelDeg) < 1.2;
 
-  // Device orientation — mock drift only when motion is not live
-  useEffect(() => {
+  const stopDrift = useCallback(() => {
+    if (driftIvRef.current) {
+      clearInterval(driftIvRef.current);
+      driftIvRef.current = null;
+    }
+  }, []);
+
+  const startDrift = useCallback(() => {
+    if (driftIvRef.current) return;
+    driftIvRef.current = setInterval(() => {
+      if (motionLiveRef.current) return;
+      setLevelDeg((d) => {
+        const next =
+          Math.abs(d) > 8 ? d * 0.92 : Math.sin(Date.now() / 1800) * 3.2;
+        levelDegRef.current = next;
+        return next;
+      });
+    }, 80);
+  }, []);
+
+  const bindOrientation = useCallback(() => {
+    if (orientHandlerRef.current) {
+      window.removeEventListener(
+        "deviceorientation",
+        orientHandlerRef.current
+      );
+    }
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.gamma == null && e.beta == null) return;
       motionLiveRef.current = true;
+      stopDrift();
       setMotion("live");
+      // Portrait iPhone: gamma is left/right horizon tilt
       const g = e.gamma ?? 0;
-      const next = Math.max(-15, Math.min(15, g));
+      const next = Math.max(-18, Math.min(18, g));
       levelDegRef.current = next;
       setLevelDeg(next);
     };
+    orientHandlerRef.current = onOrient;
+    window.addEventListener("deviceorientation", onOrient, true);
+  }, [stopDrift]);
 
-    let driftIv: ReturnType<typeof setInterval> | undefined;
+  useEffect(() => {
+    const mq = window.matchMedia("(display-mode: standalone)");
+    const nav = window.navigator as Navigator & { standalone?: boolean };
+    setStandalone(mq.matches || nav.standalone === true);
 
-    const startDrift = () => {
-      if (driftIv) return;
-      driftIv = setInterval(() => {
-        if (motionLiveRef.current) return;
-        setLevelDeg((d) => {
-          const next =
-            Math.abs(d) > 8 ? d * 0.92 : Math.sin(Date.now() / 1800) * 3.2;
-          levelDegRef.current = next;
-          return next;
-        });
-      }, 80);
-    };
-
-    const DOE = window.DeviceOrientationEvent as
-      | (typeof DeviceOrientationEvent & {
-          requestPermission?: () => Promise<"granted" | "denied">;
-        })
-      | undefined;
-
-    if (DOE?.requestPermission) {
+    if (isIOSPermissionAPI()) {
       setMotion("needs_permission");
       startDrift();
-    } else if (typeof window !== "undefined" && "DeviceOrientationEvent" in window) {
-      window.addEventListener("deviceorientation", onOrient);
-      // If no events arrive shortly, stay on mock drift
+    } else if ("DeviceOrientationEvent" in window) {
+      bindOrientation();
       startDrift();
       setMotion("mock");
     } else {
@@ -132,12 +181,76 @@ export default function ShootPage() {
     }
 
     return () => {
-      window.removeEventListener("deviceorientation", onOrient);
-      if (driftIv) clearInterval(driftIv);
+      stopDrift();
+      if (orientHandlerRef.current) {
+        window.removeEventListener(
+          "deviceorientation",
+          orientHandlerRef.current,
+          true
+        );
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
     };
+  }, [bindOrientation, startDrift, stopDrift]);
+
+  const startCamera = useCallback(async (): Promise<boolean> => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraMode("mock");
+      return false;
+    }
+    setCameraMode("pending");
+    const attempts: MediaStreamConstraints[] = [
+      {
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      },
+      {
+        audio: false,
+        video: { facingMode: "environment" },
+      },
+      { audio: false, video: true },
+    ];
+
+    let lastErr: unknown;
+    setCamError(null);
+    for (const constraints of attempts) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = stream;
+        const video = videoRef.current;
+        if (video) await attachStream(video, stream);
+        setCameraMode("live");
+        setCamError(null);
+        return true;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    const err = lastErr as DOMException | Error | undefined;
+    const name = err && "name" in err ? String(err.name) : "Error";
+    const msg = err && "message" in err ? String(err.message) : "getUserMedia failed";
+    const hint =
+      name === "NotAllowedError"
+        ? "Permission denied — Settings → Safari → Camera"
+        : name === "NotFoundError"
+          ? "No camera found on this device"
+          : name === "NotReadableError"
+            ? "Camera in use by another app"
+            : name === "SecurityError"
+              ? "Needs HTTPS / Safari (not an in-app browser)"
+              : `${name}: ${msg}`;
+    console.warn("camera start failed", name, msg);
+    setCamError(hint);
+    setCameraMode("denied");
+    return false;
   }, []);
 
-  const enableMotion = useCallback(async () => {
+  const enableMotion = useCallback(async (): Promise<boolean> => {
     const DOE = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
       requestPermission?: () => Promise<"granted" | "denied">;
     };
@@ -146,60 +259,31 @@ export default function ShootPage() {
         const res = await DOE.requestPermission();
         if (res !== "granted") {
           setMotion("mock");
-          return;
+          startDrift();
+          return false;
         }
       }
-      const onOrient = (e: DeviceOrientationEvent) => {
-        if (e.gamma == null && e.beta == null) return;
-        motionLiveRef.current = true;
-        setMotion("live");
-        const g = e.gamma ?? 0;
-        const next = Math.max(-15, Math.min(15, g));
-        levelDegRef.current = next;
-        setLevelDeg(next);
-      };
-      window.addEventListener("deviceorientation", onOrient);
+      bindOrientation();
       setMotion("live");
+      return true;
     } catch {
       setMotion("mock");
+      startDrift();
+      return false;
     }
-  }, []);
+  }, [bindOrientation, startDrift]);
 
+  /** One user gesture — required on iOS Safari for sensors (+ reliable cam). */
+  const enableIPhoneCapture = useCallback(async () => {
+    await enableMotion();
+    await startCamera();
+  }, [enableMotion, startCamera]);
+
+  // Non-iOS: auto-start camera; iOS waits for tap
   useEffect(() => {
-    let cancelled = false;
-    async function startCam() {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setCameraMode("mock");
-        return;
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-          },
-          audio: false,
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        setCameraMode("live");
-      } catch {
-        setCameraMode("mock");
-      }
-    }
-    startCam();
-    return () => {
-      cancelled = true;
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
+    if (isIOSPermissionAPI()) return;
+    void startCamera();
+  }, [startCamera]);
 
   const capture = useCallback(() => {
     setFlash(true);
@@ -210,7 +294,6 @@ export default function ShootPage() {
       Math.abs(deg) < 1.2 ? ["level_ok"] : ["needs_level"];
 
     const dataUrl = grabFrame(videoRef.current, cameraMode, room, chip);
-
     addPhoto(id, room, chip, { flags, dataUrl });
     setChipIdx((i) => i + 1);
   }, [addPhoto, id, room, chip, cameraMode]);
@@ -221,12 +304,30 @@ export default function ShootPage() {
     );
   }
 
+  const needsGate =
+    motion === "needs_permission" ||
+    cameraMode === "idle" ||
+    cameraMode === "denied";
+
+  const showVideo = cameraMode === "live" || cameraMode === "pending";
+
   return (
-    <main className="relative flex min-h-[100dvh] flex-col bg-ink text-paper">
-      <div className="flex items-center justify-between px-3 py-3">
+    <main
+      className="fw-shoot-screen fixed inset-0 z-50 mx-auto flex w-full max-w-[430px] flex-col bg-ink text-paper"
+      data-standalone={standalone ? "1" : "0"}
+    >
+      {/* Top chrome — safe area */}
+      <div
+        className="flex items-center justify-between px-3"
+        style={{
+          paddingTop: "max(0.75rem, env(safe-area-inset-top, 0px))",
+          paddingBottom: "0.5rem",
+        }}
+      >
         <Link
           href={`/listings/${id}`}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-sm"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-sm active:bg-white/20"
+          aria-label="Back"
         >
           ←
         </Link>
@@ -240,13 +341,13 @@ export default function ShootPage() {
         </div>
         <Link
           href={`/listings/${id}/review`}
-          className="rounded-full bg-white/10 px-3 py-1.5 text-xs"
+          className="min-h-11 rounded-full bg-white/10 px-3 py-2 text-xs active:bg-white/20"
         >
           Roll ({photos.length})
         </Link>
       </div>
 
-      <div className="scrollbar-none flex gap-1.5 overflow-x-auto px-3 pb-2">
+      <div className="scrollbar-none flex gap-1.5 overflow-x-auto px-3 pb-2 [-webkit-overflow-scrolling:touch]">
         {ROOM_ORDER.map((r) => {
           const active = r === room;
           return (
@@ -257,7 +358,7 @@ export default function ShootPage() {
                 setRoom(r);
                 setChipIdx(0);
               }}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs capitalize ${
+              className={`min-h-9 shrink-0 rounded-full px-3 py-2 text-xs capitalize ${
                 active ? "bg-paper text-ink" : "bg-white/10 text-white/70"
               }`}
             >
@@ -267,32 +368,34 @@ export default function ShootPage() {
         })}
       </div>
 
-      <div className="relative mx-3 flex-1 overflow-hidden rounded-fw bg-[#12110f]">
-        {cameraMode === "live" || cameraMode === "pending" ? (
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            className={`absolute inset-0 h-full w-full object-cover ${
-              cameraMode === "pending" ? "opacity-0" : "opacity-100"
-            }`}
-          />
-        ) : null}
+      <div className="relative mx-0 flex-1 overflow-hidden bg-[#12110f] sm:mx-3 sm:rounded-fw">
+        {/* Always mount video so ref exists before permission grant */}
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          autoPlay
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity ${
+            showVideo && cameraMode === "live" ? "opacity-100" : "opacity-0"
+          }`}
+        />
 
-        {cameraMode === "mock" ? (
+        {cameraMode !== "live" ? (
           <div className="absolute inset-0 bg-gradient-to-br from-[#3a342c] via-[#1c1a17] to-[#0e0d0c]">
             <div className="absolute inset-8 border border-white/10" />
-            <div className="absolute left-1/2 top-1/2 h-24 w-40 -translate-x-1/2 -translate-y-1/2 border border-dashed border-white/20" />
             <p className="absolute bottom-4 left-0 right-0 text-center text-[10px] uppercase tracking-[0.16em] text-white/35">
-              Camera preview · elegant mock
+              {cameraMode === "denied"
+                ? "Camera blocked · check Safari settings"
+                : cameraMode === "pending"
+                  ? "Starting camera…"
+                  : "Camera preview"}
             </p>
           </div>
         ) : null}
 
-        {/* Horizon leveler */}
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div
-            className="absolute left-4 right-4 h-px origin-center transition-colors"
+            className="absolute left-4 right-4 h-px origin-center transition-colors duration-75"
             style={{
               transform: `rotate(${levelDeg}deg)`,
               background: isLevel
@@ -301,7 +404,7 @@ export default function ShootPage() {
             }}
           />
           <div
-            className={`absolute h-2.5 w-2.5 rounded-full border-2 transition-colors ${
+            className={`absolute h-2.5 w-2.5 rounded-full border-2 transition-colors duration-75 ${
               isLevel
                 ? "border-level bg-level"
                 : "border-white/70 bg-transparent"
@@ -317,7 +420,6 @@ export default function ShootPage() {
           </span>
         </div>
 
-        {/* Morphing corner / angle silhouette */}
         <svg
           className="pointer-events-none absolute inset-0 h-full w-full opacity-45"
           viewBox="0 0 100 100"
@@ -349,26 +451,36 @@ export default function ShootPage() {
           ))}
         </svg>
 
-        {motion === "needs_permission" ? (
-          <button
-            type="button"
-            onClick={enableMotion}
-            className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/25 bg-black/55 px-3 py-1.5 text-[11px] text-white/90 backdrop-blur-sm"
-          >
-            Enable leveler sensors
-          </button>
+        {needsGate ? (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/45 px-6 backdrop-blur-[2px]">
+            <p className="max-w-[16rem] text-center text-sm leading-snug text-white/90">
+              {cameraMode === "denied"
+                ? camError ??
+                  "Allow Camera in Settings → Safari, then tap retry."
+                : "iPhone needs a tap to unlock the camera and leveler."}
+            </p>
+            <button
+              type="button"
+              onClick={() => void enableIPhoneCapture()}
+              className="min-h-12 rounded-full bg-paper px-6 text-sm font-medium text-ink active:scale-[0.98]"
+            >
+              {cameraMode === "denied"
+                ? "Retry camera & leveler"
+                : "Enable camera & leveler"}
+            </button>
+          </div>
         ) : null}
 
         {flash ? (
-          <div className="absolute inset-0 bg-white/80 transition-opacity" />
+          <div className="pointer-events-none absolute inset-0 bg-white/80" />
         ) : null}
       </div>
 
-      <div className="px-4 py-3">
+      <div className="px-4 py-2">
         <button
           type="button"
           onClick={() => setChipIdx((i) => i + 1)}
-          className="w-full rounded-fw border border-white/15 bg-white/10 px-4 py-3 text-left"
+          className="w-full rounded-fw border border-white/15 bg-white/10 px-4 py-3 text-left active:bg-white/15"
         >
           <p className="text-[10px] uppercase tracking-[0.12em] text-white/45">
             Coach · {guide.kind} · tap for next
@@ -379,10 +491,17 @@ export default function ShootPage() {
         </button>
       </div>
 
-      <div className="flex items-center justify-center gap-8 px-4 pb-8 pt-1">
+      {/* Shutter row — home indicator safe area */}
+      <div
+        className="flex items-center justify-center gap-8 px-4 pt-1"
+        style={{
+          paddingBottom:
+            "max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 0.75rem))",
+        }}
+      >
         <Link
           href={`/listings/${id}/review`}
-          className="w-16 text-center text-xs text-white/50"
+          className="flex min-h-11 w-16 items-center justify-center text-center text-xs text-white/50"
         >
           Review
         </Link>
@@ -394,10 +513,12 @@ export default function ShootPage() {
         >
           <span className="h-14 w-14 rounded-full bg-paper ring-2 ring-ink/20" />
         </button>
-        <div className="w-16 text-center text-xs text-white/50">
+        <div className="flex min-h-11 w-16 items-center justify-center text-center text-xs text-white/50">
           {cameraMode === "live"
-            ? "Live"
-            : cameraMode === "mock"
+            ? motion === "live"
+              ? "Live"
+              : "Cam"
+            : cameraMode === "mock" || cameraMode === "denied"
               ? "Mock"
               : "…"}
         </div>

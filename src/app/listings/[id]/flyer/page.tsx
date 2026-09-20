@@ -14,7 +14,8 @@ import { FLYER_TEMPLATES, BURN, OPEN_HOUSE_PACK_IDS } from "@/data/plans";
 import { useAppStore } from "@/store/app-store";
 import { formatListingPrice } from "@/lib/credits";
 import {
-  downloadFlyerResult,
+  canShareFiles,
+  deliverFlyerResult,
   generateFlyer,
   previewLayout,
 } from "@/lib/flyer";
@@ -46,6 +47,7 @@ export default function FlyerPage() {
   const [busy, setBusy] = useState(false);
   const [showOhUpsell, setShowOhUpsell] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [shareCapable, setShareCapable] = useState(false);
 
   const template = FLYER_TEMPLATES.find((t) => t.id === templateId);
   const cost =
@@ -58,6 +60,10 @@ export default function FlyerPage() {
       setBullets(listing.features);
     }
   }, [listing]);
+
+  useEffect(() => {
+    setShareCapable(canShareFiles());
+  }, []);
 
   if (!listing) {
     return (
@@ -112,12 +118,16 @@ export default function FlyerPage() {
           showingTime: showing,
         },
       });
-      await downloadFlyerResult(result);
+      const mode = await deliverFlyerResult(result, true);
       if (pack) markOh(id);
       setMsg(
-        pack
-          ? `Downloaded ${result.files.length} PDFs (open-house pack).`
-          : `Downloaded ${result.files[0]?.filename}`
+        mode === "share"
+          ? pack
+            ? "Shared open-house pack via share sheet."
+            : "Shared PDF via share sheet."
+          : pack
+            ? `Downloaded ${result.files.length} PDFs (open-house pack).`
+            : `Downloaded ${result.files[0]?.filename}`
       );
       if (!pack && !ohBought.includes(id)) {
         setShowOhUpsell(true);
@@ -308,13 +318,24 @@ export default function FlyerPage() {
             </Link>
           </div>
         ) : (
-          <Button size="lg" disabled={busy} onClick={onGenerate}>
-            {busy
-              ? "Generating…"
-              : templateId === "open_house_pack"
-                ? `Generate 3 PDFs · ${cost} credits`
-                : `Generate PDF · ${cost} credits`}
-          </Button>
+          <>
+            <Button size="lg" disabled={busy} onClick={onGenerate}>
+              {busy
+                ? "Generating…"
+                : shareCapable
+                  ? templateId === "open_house_pack"
+                    ? `Share 3 PDFs · ${cost} credits`
+                    : `Share PDF · ${cost} credits`
+                  : templateId === "open_house_pack"
+                    ? `Generate 3 PDFs · ${cost} credits`
+                    : `Generate PDF · ${cost} credits`}
+            </Button>
+            {shareCapable ? (
+              <p className="text-center text-[11px] text-faint">
+                Opens the iPhone share sheet — AirDrop, Files, Messages, or print.
+              </p>
+            ) : null}
+          </>
         )}
 
         {showOhUpsell ? (

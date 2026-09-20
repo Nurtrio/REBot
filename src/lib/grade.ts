@@ -7,11 +7,30 @@ import type { RoomType } from "@/types";
 
 export type GradeMode = "single" | "batch";
 
+/**
+ * Stable model ids. Client LUT ids today; cloud vision/grade ids plug in
+ * later without changing GradeRequest / GradeResult / pickModel callers.
+ */
 export type GradeModelId =
   | "lut-natural-v1"
   | "lut-interior-warm"
   | "lut-exterior-sky"
-  | "lut-batch-fast";
+  | "lut-batch-fast"
+  | (string & {});
+
+/**
+ * Pluggable grade backend. Swap `setGradeEngine(cloudEngine)` when the
+ * vision/grade API is ready — UI keeps calling runGrade().
+ */
+export interface GradeEngine {
+  readonly kind: "client-lut" | "cloud";
+  pickModel: (
+    room: RoomType | undefined,
+    mode: GradeMode,
+    skyPolish: boolean
+  ) => GradeModelId;
+  run: (req: GradeRequest) => Promise<GradeResult[]>;
+}
 
 export interface GradeRequest {
   photoIds: string[];
@@ -192,14 +211,13 @@ export async function applyNaturalGrade(
   return canvas.toDataURL("image/jpeg", 0.86);
 }
 
-export async function runGrade(req: GradeRequest): Promise<GradeResult[]> {
+async function runClientLut(req: GradeRequest): Promise<GradeResult[]> {
   const results: GradeResult[] = [];
   for (const photoId of req.photoIds) {
     const room = req.rooms?.[photoId];
     const model = pickModel(room, req.mode, !!req.skyPolish);
     const thumbKey = `graded-${photoId}`;
     try {
-      // Simulate async job queue hop
       await new Promise((r) => setTimeout(r, req.mode === "batch" ? 180 : 320));
       const gradedDataUrl = await applyNaturalGrade(
         req.sources?.[photoId],
@@ -229,4 +247,26 @@ export async function runGrade(req: GradeRequest): Promise<GradeResult[]> {
     }
   }
   return results;
+}
+
+/** Default engine — organic client LUT. Replace via setGradeEngine. */
+export const clientLutEngine: GradeEngine = {
+  kind: "client-lut",
+  pickModel,
+  run: runClientLut,
+};
+
+let activeEngine: GradeEngine = clientLutEngine;
+
+export function getGradeEngine(): GradeEngine {
+  return activeEngine;
+}
+
+export function setGradeEngine(engine: GradeEngine): void {
+  activeEngine = engine;
+}
+
+/** Facade — always go through the active GradeEngine */
+export async function runGrade(req: GradeRequest): Promise<GradeResult[]> {
+  return activeEngine.run(req);
 }

@@ -15,6 +15,7 @@ export function SoftUpsellHost() {
 
   if (dismissed) return null;
   if (pathname === "/billing") return null;
+  if (pathname?.includes("/shoot")) return null;
   // Soft: at 80% usage → balance ≤ 20% of monthly grant
   if (balance > monthlyGrant * 0.2) return null;
 

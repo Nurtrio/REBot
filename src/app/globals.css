@@ -25,6 +25,10 @@
   --fw-radius-sm: 8px;
   --fw-shadow: 0 1px 2px rgba(26, 26, 24, 0.04), 0 8px 24px rgba(26, 26, 24, 0.06);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 html,
@@ -60,29 +64,77 @@ body {
   }
 }
 
-/* Before/after slider range */
+/* Before/after slider — 44px thumb for iPhone */
 input[type="range"].fw-slider {
   -webkit-appearance: none;
   appearance: none;
-  height: 2px;
-  background: var(--fw-line-strong);
-  border-radius: 1px;
+  width: 100%;
+  height: 44px;
+  margin: 0;
   outline: none;
+  background: transparent;
+  background-image: linear-gradient(var(--fw-line-strong), var(--fw-line-strong));
+  background-size: 100% 4px;
+  background-position: center;
+  background-repeat: no-repeat;
+  touch-action: none;
 }
 input[type="range"].fw-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 22px;
-  height: 22px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: var(--fw-ink);
-  border: 2px solid var(--fw-paper);
+  border: 3px solid var(--fw-paper);
   cursor: ew-resize;
   box-shadow: var(--fw-shadow);
+}
+input[type="range"].fw-slider::-moz-range-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--fw-ink);
+  border: 3px solid var(--fw-paper);
+  cursor: ew-resize;
+}
+
+/* Grade screen — safe bottom for home indicator + confirm CTA */
+.fw-grade-screen {
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fw-compare {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* PWA install friendly */
 @media (display-mode: standalone) {
   body {
     padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Full-bleed iPhone shoot — no desktop chrome, home-indicator safe */
+.fw-shoot-screen {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+@media (display-mode: standalone) {
+  .fw-shoot-screen {
+    /* status bar already translucent; keep content clear of notch */
+  }
+  body.fw-no-chrome {
+    /* reserved for future body class toggle */
   }
 }

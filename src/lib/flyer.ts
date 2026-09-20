@@ -320,7 +320,54 @@ export function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function downloadFlyerResult(result: FlyerGenerateResult) {
+export function canShareFiles(): boolean {
+  if (typeof navigator === "undefined" || typeof File === "undefined") return false;
+  if (!navigator.share || !navigator.canShare) return false;
+  try {
+    const probe = new File([new Blob(["x"], { type: "application/pdf" })], "probe.pdf", {
+      type: "application/pdf",
+    });
+    return navigator.canShare({ files: [probe] });
+  } catch {
+    return false;
+  }
+}
+
+export type FlyerDeliverMode = "share" | "download";
+
+/** Prefer iOS/Android share sheet when File sharing is supported; else download. */
+export async function deliverFlyerResult(
+  result: FlyerGenerateResult,
+  preferShare = true
+): Promise<FlyerDeliverMode> {
+  const files = result.files.map(
+    (f) =>
+      new File([f.blob], f.filename, {
+        type: "application/pdf",
+        lastModified: Date.now(),
+      })
+  );
+
+  if (preferShare && canShareFiles()) {
+    try {
+      await navigator.share({
+        files,
+        title: "Framewalk flyer",
+        text:
+          files.length > 1
+            ? "Open-house flyer pack from Framewalk"
+            : "Listing flyer from Framewalk",
+      });
+      return "share";
+    } catch (err) {
+      // User cancel — don't fall through to download spam
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return "share";
+      }
+      // Share failed (e.g. too many files) — fall through
+    }
+  }
+
   for (let i = 0; i < result.files.length; i++) {
     const f = result.files[i];
     downloadBlob(f.blob, f.filename);
@@ -328,4 +375,10 @@ export async function downloadFlyerResult(result: FlyerGenerateResult) {
       await new Promise((r) => setTimeout(r, 280));
     }
   }
+  return "download";
+}
+
+/** @deprecated use deliverFlyerResult */
+export async function downloadFlyerResult(result: FlyerGenerateResult) {
+  await deliverFlyerResult(result, false);
 }

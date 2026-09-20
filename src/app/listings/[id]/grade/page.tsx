@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -12,7 +12,7 @@ import {
   SectionLabel,
 } from "@/components/ui";
 import { useAppStore } from "@/store/app-store";
-import { runGrade } from "@/lib/grade";
+import { getGradeEngine, runGrade } from "@/lib/grade";
 import { BURN } from "@/data/plans";
 import type { RoomType } from "@/types";
 
@@ -42,6 +42,16 @@ export default function GradePage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [doneIds, setDoneIds] = useState<string[]>([]);
   const [lastModels, setLastModels] = useState<string[]>([]);
+  const compareRef = useRef<HTMLDivElement>(null);
+  const engineKind = getGradeEngine().kind;
+
+  function setSliderFromClientX(clientX: number) {
+    const el = compareRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pct = ((clientX - rect.left) / Math.max(rect.width, 1)) * 100;
+    setSlider(Math.max(5, Math.min(95, pct)));
+  }
 
   const active = photos.find((p) => p.id === activeId) ?? photos[0];
 
@@ -165,7 +175,7 @@ export default function GradePage() {
   const showAfter = !!afterUrl || active?.status === "graded";
 
   return (
-    <main>
+    <main className="fw-grade-screen">
       <ScreenHeader
         title="Grade"
         subtitle="Natural color · no structural edits"
@@ -173,7 +183,7 @@ export default function GradePage() {
         right={<CreditPill balance={balance} />}
       />
 
-      <div className="px-4 py-4 space-y-5">
+      <div className="py-4 space-y-5">
         {listing.mlsDisclosure ? (
           <div className="rounded-fw border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
             MLS disclosure: sky polish used on one or more frames in this listing.
@@ -191,7 +201,7 @@ export default function GradePage() {
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              className={`flex-1 rounded-fw border py-2 text-sm ${
+              className={`flex-1 min-h-12 rounded-fw border py-3 text-sm font-medium ${
                 mode === m
                   ? "border-ink bg-ink text-paper"
                   : "border-line bg-paper-raised text-muted"
@@ -205,7 +215,20 @@ export default function GradePage() {
         {active ? (
           <div>
             <SectionLabel>Before / after</SectionLabel>
-            <div className="relative aspect-[4/3] overflow-hidden rounded-fw border border-line">
+            <div
+              ref={compareRef}
+              className="fw-compare relative aspect-[4/3] overflow-hidden rounded-fw border border-line"
+              onPointerDown={(e) => {
+                if (!showAfter) return;
+                e.currentTarget.setPointerCapture(e.pointerId);
+                setSliderFromClientX(e.clientX);
+              }}
+              onPointerMove={(e) => {
+                if (!showAfter || !e.currentTarget.hasPointerCapture(e.pointerId))
+                  return;
+                setSliderFromClientX(e.clientX);
+              }}
+            >
               <PhotoThumb
                 thumbKey={active.thumbKey}
                 dataUrl={beforeUrl}
@@ -230,8 +253,13 @@ export default function GradePage() {
                 </div>
               ) : null}
               <div
-                className="absolute inset-y-0 w-0.5 bg-paper"
+                className="absolute inset-y-0 w-1 bg-paper shadow"
                 style={{ left: `${slider}%` }}
+              />
+              <div
+                className="absolute top-1/2 h-11 w-11 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-paper bg-ink/80"
+                style={{ left: `${slider}%` }}
+                aria-hidden
               />
               <span className="absolute left-2 top-2 rounded bg-black/50 px-1.5 py-0.5 text-[9px] uppercase text-white">
                 Before
@@ -246,13 +274,15 @@ export default function GradePage() {
               max={95}
               value={slider}
               onChange={(e) => setSlider(Number(e.target.value))}
-              className="fw-slider mt-3 w-full"
+              className="fw-slider mt-2 w-full"
               aria-label="Before after slider"
               disabled={!showAfter}
             />
-            {active.gradeModel ? (
-              <p className="mt-1 text-xs text-muted">Model: {active.gradeModel}</p>
-            ) : null}
+            <p className="mt-1 text-xs text-muted">
+              Engine: {engineKind === "cloud" ? "cloud pro" : "client LUT"}
+              {active.gradeModel ? ` · ${active.gradeModel}` : ""}
+              {" · "}drag compare or use slider
+            </p>
           </div>
         ) : null}
 
@@ -271,7 +301,7 @@ export default function GradePage() {
                   thumbKey={p.thumbKey}
                   dataUrl={p.gradedDataUrl ?? p.dataUrl}
                   graded={p.status === "graded"}
-                  className="h-14 w-14"
+                  className="h-16 w-16"
                 />
               </button>
             ))}
@@ -289,7 +319,7 @@ export default function GradePage() {
             type="checkbox"
             checked={skyPolish}
             onChange={(e) => setSkyPolish(e.target.checked)}
-            className="mt-1"
+            className="mt-1 h-5 w-5"
           />
           <span>
             <span className="font-medium text-ink">Sky polish</span>

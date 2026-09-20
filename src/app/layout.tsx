@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { DM_Sans, Newsreader } from "next/font/google";
 import { BottomNav } from "@/components/bottom-nav";
 import { SoftUpsellHost } from "@/components/providers";
+import { IosInstallHint } from "@/components/ios-install-hint";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -18,22 +19,41 @@ const newsreader = Newsreader({
 
 export const metadata: Metadata = {
   title: "Framewalk — Real Estate Media OS",
-  description:
-    "Guided shoot. Natural grade. Instant marketing. One place.",
+  description: "Guided shoot. Natural grade. Instant marketing. One place.",
   applicationName: "Framewalk",
+  manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    statusBarStyle: "black-translucent",
     title: "Framewalk",
   },
-  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "black-translucent",
+    "apple-mobile-web-app-title": "Framewalk",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#F7F4EF",
+  userScalable: false,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F7F4EF" },
+    { media: "(prefers-color-scheme: dark)", color: "#1a1814" },
+  ],
   viewportFit: "cover",
 };
 
@@ -48,6 +68,7 @@ export default function RootLayout({
         <div className="fw-shell bg-paper pb-20">
           {children}
           <SoftUpsellHost />
+          <IosInstallHint />
           <BottomNav />
         </div>
       </body>
