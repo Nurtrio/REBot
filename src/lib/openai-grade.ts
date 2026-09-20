@@ -1,11 +1,16 @@
 /**
  * OpenAI Images Edit client for Framewalk pro RE grade.
  * Hard gate: color/tone only — never ask for staging, object removal, or structural change.
+ * Aspect: shoot captures are 4:3 (1280×960). We letterbox → square for the API, then crop back.
  */
 
+import sharp from "sharp";
 import type { RoomType } from "@/types";
 
 const OPENAI_IMAGES_EDIT = "https://api.openai.com/v1/images/edits";
+
+/** OpenAI Images Edit square size we letterbox into */
+const EDIT_SIZE = 1024;
 
 export type GradePack = "interior" | "exterior";
 
@@ -32,7 +37,8 @@ function buildPrompt(pack: GradePack, skyPolish: boolean): string {
     "correct white balance, exposure, contrast, and mild warmth. " +
     "CRITICAL HARD RULES: Do NOT add, remove, move, or invent any furniture, people, plants, walls, floors, fixtures, or amenities. " +
     "Do NOT virtual stage. Do NOT change architecture, room layout, or materials. " +
-    "Preserve the true look of the property. Output must look like a skilled Lightroom pass, not generative AI art.";
+    "Preserve the true look of the property. Output must look like a skilled Lightroom pass, not generative AI art. " +
+    "The input may include neutral letterbox bars to preserve a 4:3 frame — leave those bars unchanged; only grade the photo content.";
 
   if (pack === "interior") {
     return (
@@ -57,24 +63,91 @@ function buildPrompt(pack: GradePack, skyPolish: boolean): string {
   );
 }
 
-function dataUrlToBuffer(dataUrl: string): { buffer: Buffer; contentType: string; filename: string } {
+function dataUrlToBuffer(dataUrl: string): { buffer: Buffer; contentType: string } {
   const m = /^data:([^;]+);base64,([\s\S]+)$/.exec(dataUrl);
   if (!m) {
     throw new Error("source must be a data URL");
   }
-  const contentType = m[1] || "image/jpeg";
-  const buffer = Buffer.from(m[2], "base64");
-  const ext = contentType.includes("png") ? "png" : "jpg";
-  return { buffer, contentType, filename: `source.${ext}` };
+  return {
+    contentType: m[1] || "image/jpeg",
+    buffer: Buffer.from(m[2], "base64"),
+  };
 }
 
-async function fetchUrlToBuffer(url: string): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+async function fetchUrlToBuffer(
+  url: string
+): Promise<{ buffer: Buffer; contentType: string }> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch source image (${res.status})`);
   const contentType = res.headers.get("content-type") || "image/jpeg";
   const ab = await res.arrayBuffer();
-  const ext = contentType.includes("png") ? "png" : "jpg";
-  return { buffer: Buffer.from(ab), contentType, filename: `source.${ext}` };
+  return { buffer: Buffer.from(ab), contentType };
+}
+
+/**
+ * Fit image into EDIT_SIZE×EDIT_SIZE with neutral letterbox bars (no stretch).
+ * Returns square PNG + crop box to recover original aspect after edit.
+ */
+export async function letterboxToSquare(input: Buffer): Promise<{
+  squarePng: Buffer;
+  /** Content rect inside the square (pixels) */
+  content: { left: number; top: number; width: number; height: number };
+  /** Original pixel size (for output target) */
+  original: { width: number; height: number };
+}> {
+  const meta = await sharp(input).metadata();
+  const ow = meta.width || 1280;
+  const oh = meta.height || 960;
+
+  const scale = Math.min(EDIT_SIZE / ow, EDIT_SIZE / oh);
+  const tw = Math.max(1, Math.round(ow * scale));
+  const th = Math.max(1, Math.round(oh * scale));
+  const left = Math.floor((EDIT_SIZE - tw) / 2);
+  const top = Math.floor((EDIT_SIZE - th) / 2);
+
+  const resized = await sharp(input)
+    .rotate() // honor EXIF orientation from iPhone
+    .resize(tw, th, { fit: "fill" })
+    .png()
+    .toBuffer();
+
+  const squarePng = await sharp({
+    create: {
+      width: EDIT_SIZE,
+      height: EDIT_SIZE,
+      channels: 3,
+      background: { r: 128, g: 128, b: 128 },
+    },
+  })
+    .composite([{ input: resized, left, top }])
+    .png()
+    .toBuffer();
+
+  return {
+    squarePng,
+    content: { left, top, width: tw, height: th },
+    original: { width: ow, height: oh },
+  };
+}
+
+/** Crop letterboxed edit result back to original aspect; encode JPEG. */
+export async function cropSquareToOriginalAspect(
+  squareBuffer: Buffer,
+  content: { left: number; top: number; width: number; height: number },
+  original: { width: number; height: number }
+): Promise<string> {
+  const cropped = await sharp(squareBuffer)
+    .extract({
+      left: content.left,
+      top: content.top,
+      width: content.width,
+      height: content.height,
+    })
+    .resize(original.width, original.height, { fit: "fill" })
+    .jpeg({ quality: 88 })
+    .toBuffer();
+
+  return `data:image/jpeg;base64,${cropped.toString("base64")}`;
 }
 
 export async function enhanceWithOpenAI(opts: {
@@ -89,9 +162,11 @@ export async function enhanceWithOpenAI(opts: {
     throw new Error("missing source image");
   }
 
-  const { buffer, contentType, filename } = opts.sourceUrl.startsWith("data:")
+  const { buffer } = opts.sourceUrl.startsWith("data:")
     ? dataUrlToBuffer(opts.sourceUrl)
     : await fetchUrlToBuffer(opts.sourceUrl);
+
+  const { squarePng, content, original } = await letterboxToSquare(buffer);
 
   const model = opts.model || process.env.OPENAI_GRADE_MODEL || "gpt-image-1";
   const prompt = buildPrompt(opts.pack, opts.skyPolish);
@@ -100,12 +175,11 @@ export async function enhanceWithOpenAI(opts: {
   form.append("model", model);
   form.append("prompt", prompt);
   form.append("n", "1");
-  form.append("size", "1024x1024");
-  form.append("quality", opts.quality || (opts.pack === "exterior" ? "medium" : "medium"));
-  // GPT image models return b64_json by default
-  const bytes = new Uint8Array(buffer);
-  const blob = new Blob([bytes], { type: contentType });
-  form.append("image[]", blob, filename);
+  form.append("size", `${EDIT_SIZE}x${EDIT_SIZE}`);
+  form.append("quality", opts.quality || "medium");
+  const bytes = new Uint8Array(squarePng);
+  const blob = new Blob([bytes], { type: "image/png" });
+  form.append("image[]", blob, "source.png");
 
   const res = await fetch(OPENAI_IMAGES_EDIT, {
     method: "POST",
@@ -121,18 +195,32 @@ export async function enhanceWithOpenAI(opts: {
   };
 
   if (!res.ok) {
-    throw new Error(json.error?.message || `OpenAI images/edits failed (${res.status})`);
+    throw new Error(
+      json.error?.message || `OpenAI images/edits failed (${res.status})`
+    );
   }
 
+  let squareOut: Buffer;
   const b64 = json.data?.[0]?.b64_json;
   if (b64) {
-    return `data:image/png;base64,${b64}`;
+    squareOut = Buffer.from(b64, "base64");
+  } else if (json.data?.[0]?.url) {
+    const img = await fetch(json.data[0].url);
+    squareOut = Buffer.from(await img.arrayBuffer());
+  } else {
+    throw new Error("OpenAI returned no image data");
   }
-  const url = json.data?.[0]?.url;
-  if (url) {
-    const img = await fetch(url);
-    const ab = await img.arrayBuffer();
-    return `data:image/jpeg;base64,${Buffer.from(ab).toString("base64")}`;
-  }
-  throw new Error("OpenAI returned no image data");
+
+  // Scale crop box if API returns a different square size than EDIT_SIZE
+  const outMeta = await sharp(squareOut).metadata();
+  const outSide = outMeta.width || EDIT_SIZE;
+  const scale = outSide / EDIT_SIZE;
+  const scaledContent = {
+    left: Math.round(content.left * scale),
+    top: Math.round(content.top * scale),
+    width: Math.round(content.width * scale),
+    height: Math.round(content.height * scale),
+  };
+
+  return cropSquareToOriginalAspect(squareOut, scaledContent, original);
 }

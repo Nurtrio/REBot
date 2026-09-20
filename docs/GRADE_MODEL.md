@@ -3,6 +3,8 @@
 **North star:** Professional real-estate interior/exterior color grade that stays **organic**.  
 **Hard gate:** no structural edits, no virtual staging, no invented furniture/walls/amenities.
 
+**Aspect:** Shoot captures are **4:3** (1280×960). OpenAI edit is letterboxed to square then cropped back so iPhone frames are never square-squashed (`letterboxToSquare` / `cropSquareToOriginalAspect` in `openai-grade.ts`).
+
 UI already routes through `pickModel` + `GradeEngine` (`src/lib/grade.ts`). Client LUT is the fallback; this doc defines the **pro** path.
 
 ---
