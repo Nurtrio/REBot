@@ -9,22 +9,23 @@ import type { PlanId } from "@/types";
 export default function BillingPage() {
   const balance = useAppStore((s) => s.balance());
   const planId = useAppStore((s) => s.planId);
-  const monthlyGrant = useAppStore((s) => s.monthlyGrant);
   const ledger = useAppStore((s) => s.ledger);
   const setPlan = useAppStore((s) => s.setPlan);
   const topUp = useAppStore((s) => s.topUp);
+  const usageRatio = useAppStore((s) => s.usageRatio());
+  const softUpsellDismissed = useAppStore((s) => s.softUpsellDismissed);
+  const dismissSoftUpsell = useAppStore((s) => s.dismissSoftUpsell);
 
   const plan = PLANS.find((p) => p.id === planId)!;
-  const usagePct = Math.min(
-    100,
-    Math.round(
-      (ledger
-        .filter((e) => e.delta < 0)
-        .reduce((s, e) => s + Math.abs(e.delta), 0) /
-        monthlyGrant) *
-        100
-    )
-  );
+  const usagePct = Math.min(100, Math.round(usageRatio * 100));
+  const showSoftUpsell = usageRatio >= 0.8 && !softUpsellDismissed;
+  const nextPlan =
+    planId === "starter"
+      ? PLANS.find((p) => p.id === "pro")
+      : planId === "pro"
+        ? PLANS.find((p) => p.id === "team")
+        : null;
+  const suggestTopUp = TOP_UPS.find((t) => t.id === "stack")!;
 
   function upgrade(next: PlanId) {
     if (next === planId) return;
@@ -59,6 +60,47 @@ export default function BillingPage() {
             photographer visit. Not a claim of MLS compliance.
           </p>
         </div>
+
+        {showSoftUpsell ? (
+          <div className="rounded-fw border border-accent/30 bg-accent-soft px-4 py-3 text-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="font-medium text-ink">
+                  You&apos;re almost through this month&apos;s credits.
+                </p>
+                <p className="mt-1 text-xs text-muted">
+                  {nextPlan
+                    ? `${nextPlan.name} is ${formatPrice(nextPlan.priceMonthly)} and covers ${nextPlan.capacity}.`
+                    : `Top up ${suggestTopUp.credits} for ${formatPrice(suggestTopUp.price)} and finish strong.`}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {nextPlan ? (
+                    <Button size="sm" onClick={() => upgrade(nextPlan.id)}>
+                      Go {nextPlan.name}
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      topUp(suggestTopUp.credits, suggestTopUp.stripeProduct)
+                    }
+                  >
+                    Add credits
+                  </Button>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="text-xs text-faint"
+                onClick={() => dismissSoftUpsell()}
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div>
           <SectionLabel>Vs traditional photo shoot</SectionLabel>

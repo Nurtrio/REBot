@@ -25,6 +25,9 @@ export interface Photo {
   /** Live capture still (data URL); preferred over gradient thumb when set */
   dataUrl?: string;
   gradedThumbKey?: string;
+  gradedDataUrl?: string;
+  gradeModel?: string;
+  skyPolished?: boolean;
 }
 
 export interface Listing {
@@ -43,6 +46,8 @@ export interface Listing {
   photoIds: string[];
   galleryOrder: string[];
   features: [string, string, string];
+  /** True when any graded shot used sky polish — show MLS disclosure */
+  mlsDisclosure?: boolean;
 }
 
 export type PlanId = "starter" | "pro" | "team";

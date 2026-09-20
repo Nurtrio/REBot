@@ -13,7 +13,11 @@ import {
 import { FLYER_TEMPLATES, BURN, OPEN_HOUSE_PACK_IDS } from "@/data/plans";
 import { useAppStore } from "@/store/app-store";
 import { formatListingPrice } from "@/lib/credits";
-import { downloadBlob, generateFlyer } from "@/lib/flyer";
+import {
+  downloadFlyerResult,
+  generateFlyer,
+  previewLayout,
+} from "@/lib/flyer";
 import type { FlyerTemplateId } from "@/types";
 
 export default function FlyerPage() {
@@ -23,7 +27,8 @@ export default function FlyerPage() {
   const agent = useAppStore((s) => s.agent);
   const balance = useAppStore((s) => s.balance());
   const canAfford = useAppStore((s) => s.canAfford);
-  const burn = useAppStore((s) => s.burn);
+  const burnFlyerJob = useAppStore((s) => s.burnFlyerJob);
+  const refundFlyerJob = useAppStore((s) => s.refundFlyerJob);
   const ohBought = useAppStore((s) => s.ohPackBoughtFor);
   const markOh = useAppStore((s) => s.markOhPackBought);
 
@@ -45,6 +50,7 @@ export default function FlyerPage() {
   const template = FLYER_TEMPLATES.find((t) => t.id === templateId);
   const cost =
     templateId === "open_house_pack" ? BURN.openHousePack : BURN.flyer;
+  const layout = previewLayout(templateId);
 
   useEffect(() => {
     if (listing) {
@@ -73,6 +79,19 @@ export default function FlyerPage() {
       setMsg("Out of credits. Top up to generate.");
       return;
     }
+
+    const pack = templateId === "open_house_pack";
+    const reserved = burnFlyerJob(
+      cost,
+      id,
+      pack,
+      pack ? "open-house pack (3 PDFs)" : `flyer ${templateId}`
+    );
+    if (!reserved) {
+      setMsg("Could not reserve credits.");
+      return;
+    }
+
     setBusy(true);
     try {
       const result = await generateFlyer({
@@ -93,23 +112,29 @@ export default function FlyerPage() {
           showingTime: showing,
         },
       });
-      const reason =
-        templateId === "open_house_pack" ? "open_house_pack" : "flyer";
-      const ok = burn(cost, reason, id, templateId);
-      if (!ok) {
-        setMsg("Could not burn credits.");
-        return;
-      }
-      if (templateId === "open_house_pack") markOh(id);
-      downloadBlob(result.blob, result.filename);
-      setMsg(`Downloaded ${result.filename} (PDF stub).`);
-      if (templateId !== "open_house_pack" && !ohBought.includes(id)) {
+      await downloadFlyerResult(result);
+      if (pack) markOh(id);
+      setMsg(
+        pack
+          ? `Downloaded ${result.files.length} PDFs (open-house pack).`
+          : `Downloaded ${result.files[0]?.filename}`
+      );
+      if (!pack && !ohBought.includes(id)) {
         setShowOhUpsell(true);
       }
+    } catch (e) {
+      refundFlyerJob(cost, id, "flyer generate failed — refund");
+      setMsg(
+        e instanceof Error ? e.message : "Generate failed — credits refunded."
+      );
     } finally {
       setBusy(false);
     }
   }
+
+  const packTemplates = OPEN_HOUSE_PACK_IDS.map(
+    (tid) => FLYER_TEMPLATES.find((t) => t.id === tid)!
+  );
 
   return (
     <main>
@@ -168,32 +193,69 @@ export default function FlyerPage() {
           </div>
         </div>
 
-        <div className="fw-card overflow-hidden">
-          <div
-            className="aspect-[3/4] max-h-56 bg-gradient-to-b from-[#2c2822] to-[#1a1814] p-5 text-paper"
-            style={{ borderBottom: `3px solid ${agent.accent}` }}
-          >
-            <p className="text-[10px] uppercase tracking-[0.18em] text-white/50">
-              {templateId === "open_house_pack"
-                ? "Pack preview"
-                : template?.name}
-            </p>
-            <p className="mt-4 font-display text-2xl leading-tight">
-              {headline || "Headline"}
-            </p>
-            <p className="mt-2 text-sm text-white/70">
-              {subhead || formatListingPrice(listing.price)}
-            </p>
-            <p className="mt-6 text-xs text-white/50">{listing.address}</p>
-            <ul className="mt-3 space-y-1 text-xs text-white/65">
-              {(bullets[0] ? bullets : listing.features).map((b) => (
-                <li key={b}>· {b}</li>
+        <div>
+          <SectionLabel>Preview · {layout.label}</SectionLabel>
+          {layout.pack ? (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {packTemplates.map((t) => (
+                <div
+                  key={t.id}
+                  className="fw-card w-28 shrink-0 overflow-hidden"
+                >
+                  <div
+                    className="aspect-[3/4] bg-gradient-to-b from-[#2c2822] to-[#1a1814] p-2.5 text-paper"
+                    style={{ borderBottom: `3px solid ${agent.accent}` }}
+                  >
+                    <p className="text-[8px] uppercase tracking-[0.14em] text-white/45">
+                      {t.name}
+                    </p>
+                    <p className="mt-2 font-display text-xs leading-tight">
+                      {t.defaultHeadline}
+                    </p>
+                    <p className="mt-1 text-[9px] text-white/55">
+                      {subhead || formatListingPrice(listing.price)}
+                    </p>
+                  </div>
+                </div>
               ))}
-            </ul>
-            <p className="mt-auto pt-8 text-[10px] text-white/40">
-              {agent.name} · {agent.brokerage}
-            </p>
-          </div>
+            </div>
+          ) : (
+            <div className={`fw-card overflow-hidden ${templateId === "door_hanger" ? "mx-auto w-40" : ""}`}>
+              <div
+                className={`${layout.aspectClass} bg-gradient-to-b from-[#2c2822] to-[#1a1814] p-5 text-paper`}
+                style={{ borderBottom: `3px solid ${agent.accent}` }}
+              >
+                <p className="text-[10px] uppercase tracking-[0.18em] text-white/50">
+                  {template?.name}
+                  {template?.orientation === "landscape" ? " · 6×9" : ""}
+                  {template?.orientation === "tall" ? " · door" : ""}
+                </p>
+                <p
+                  className={`mt-4 font-display leading-tight ${
+                    template?.orientation === "landscape"
+                      ? "text-xl"
+                      : "text-2xl"
+                  }`}
+                >
+                  {headline || "Headline"}
+                </p>
+                <p className="mt-2 text-sm text-white/70">
+                  {subhead || formatListingPrice(listing.price)}
+                </p>
+                <p className="mt-4 text-xs text-white/50">{listing.address}</p>
+                {template?.orientation !== "tall" ? (
+                  <ul className="mt-2 space-y-1 text-xs text-white/65">
+                    {(bullets[0] ? bullets : listing.features).map((b) => (
+                      <li key={b}>· {b}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <p className="mt-4 text-[10px] text-white/40">
+                  {agent.name} · {agent.brokerage}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         <div>
@@ -204,6 +266,7 @@ export default function FlyerPage() {
               value={headline}
               onChange={(e) => setHeadline(e.target.value)}
               placeholder="Headline"
+              disabled={templateId === "open_house_pack"}
             />
             <input
               className={field}
@@ -246,7 +309,11 @@ export default function FlyerPage() {
           </div>
         ) : (
           <Button size="lg" disabled={busy} onClick={onGenerate}>
-            {busy ? "Generating…" : `Generate PDF · ${cost} credits`}
+            {busy
+              ? "Generating…"
+              : templateId === "open_house_pack"
+                ? `Generate 3 PDFs · ${cost} credits`
+                : `Generate PDF · ${cost} credits`}
           </Button>
         )}
 

@@ -68,6 +68,7 @@ export default function ReviewPage() {
               >
                 <PhotoThumb
                   thumbKey={p.thumbKey}
+                  dataUrl={p.dataUrl}
                   graded={p.status === "graded"}
                   selected={p.status === "selected"}
                   className="aspect-[4/3] w-full"

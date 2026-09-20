@@ -19,7 +19,13 @@ export default function HomePage() {
   const balance = useAppStore((s) => s.balance());
   const planId = useAppStore((s) => s.planId);
   const photos = useAppStore((s) => s.photos);
+  const usageRatio = useAppStore((s) => s.usageRatio());
+  const softUpsellDismissed = useAppStore((s) => s.softUpsellDismissed);
+  const dismissSoftUpsell = useAppStore((s) => s.dismissSoftUpsell);
   const plan = PLANS.find((p) => p.id === planId)!;
+  const showSoft = usageRatio >= 0.8 && !softUpsellDismissed;
+  const nextName =
+    planId === "starter" ? "Pro" : planId === "pro" ? "Team" : null;
 
   return (
     <main>
@@ -50,6 +56,37 @@ export default function HomePage() {
           </Button>
         </Link>
       </div>
+
+      {showSoft ? (
+        <div className="mx-4 mt-4 rounded-fw border border-accent/30 bg-accent-soft px-3 py-3 text-sm">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="font-medium text-ink">
+                You&apos;re almost through this month&apos;s credits.
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                {nextName
+                  ? `${nextName} covers more listings — one tap on Billing.`
+                  : "Top up from Billing to finish this listing."}
+              </p>
+              <Link
+                href="/billing"
+                className="mt-2 inline-block text-xs font-medium text-accent"
+              >
+                Add credits
+              </Link>
+            </div>
+            <button
+              type="button"
+              className="text-xs text-faint"
+              onClick={() => dismissSoftUpsell()}
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <section className="mt-8 px-4">
         <SectionLabel>Active</SectionLabel>

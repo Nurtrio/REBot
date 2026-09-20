@@ -59,9 +59,43 @@ interface AppState {
   ) => string;
   togglePhotoSelect: (photoId: string) => void;
   setPhotoFlags: (photoId: string, flags: Photo["flags"]) => void;
-  markGraded: (photoIds: string[], gradedKeys: Record<string, string>) => void;
+  markGraded: (
+    photoIds: string[],
+    gradedKeys: Record<string, string>,
+    extras?: {
+      gradedDataUrls?: Record<string, string>;
+      models?: Record<string, string>;
+      skyPolished?: boolean;
+      listingId?: string;
+    }
+  ) => void;
+  /** QA reject: clear grade, return to selected for redo */
+  rejectGrade: (photoIds: string[]) => void;
+  /** Burn grade + optional sky_polish as separate ledger rows (reserve-first) */
+  burnGradeJob: (
+    gradeCost: number,
+    skyCost: number,
+    listingId: string,
+    batch: boolean
+  ) => boolean;
+  /** Refund after failed grade */
+  refundGradeJob: (
+    gradeCost: number,
+    skyCost: number,
+    listingId: string,
+    note?: string
+  ) => void;
   markOhPackBought: (listingId: string) => void;
   gradeCostForSelection: (photoIds: string[], batch: boolean) => number;
+  /** Reserve flyer credits before generate */
+  burnFlyerJob: (
+    cost: number,
+    listingId: string,
+    pack: boolean,
+    note?: string
+  ) => boolean;
+  /** Refund after failed flyer generate */
+  refundFlyerJob: (cost: number, listingId: string, note?: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -230,7 +264,7 @@ export const useAppStore = create<AppState>()(
           photos: s.photos.map((p) => (p.id === photoId ? { ...p, flags } : p)),
         })),
 
-      markGraded: (photoIds, gradedKeys) =>
+      markGraded: (photoIds, gradedKeys, extras) =>
         set((s) => ({
           photos: s.photos.map((p) =>
             photoIds.includes(p.id)
@@ -238,16 +272,84 @@ export const useAppStore = create<AppState>()(
                   ...p,
                   status: "graded" as const,
                   gradedThumbKey: gradedKeys[p.id] ?? `graded-${p.id}`,
+                  gradedDataUrl:
+                    extras?.gradedDataUrls?.[p.id] ?? p.gradedDataUrl,
+                  gradeModel: extras?.models?.[p.id] ?? p.gradeModel,
+                  skyPolished: extras?.skyPolished
+                    ? true
+                    : extras?.skyPolished === false
+                      ? false
+                      : p.skyPolished,
                 }
               : p
           ),
           listings: s.listings.map((l) => {
             const touched = photoIds.some((id) => l.photoIds.includes(id));
-            return touched && l.status !== "ready" && l.status !== "marketed"
-              ? { ...l, status: "grading" as const }
-              : l;
+            if (!touched) return l;
+            const next = {
+              ...l,
+              status:
+                l.status !== "ready" && l.status !== "marketed"
+                  ? ("grading" as const)
+                  : l.status,
+              mlsDisclosure:
+                extras?.skyPolished || l.mlsDisclosure
+                  ? true
+                  : l.mlsDisclosure,
+            };
+            return next;
           }),
         })),
+
+      rejectGrade: (photoIds) =>
+        set((s) => ({
+          photos: s.photos.map((p) =>
+            photoIds.includes(p.id)
+              ? {
+                  ...p,
+                  status: "selected" as const,
+                  gradedThumbKey: undefined,
+                  gradedDataUrl: undefined,
+                  gradeModel: undefined,
+                  skyPolished: undefined,
+                }
+              : p
+          ),
+        })),
+
+      burnGradeJob: (gradeCost, skyCost, listingId, batch) => {
+        const total = gradeCost + skyCost;
+        if (total <= 0) return true;
+        if (!get().canAfford(total)) return false;
+        if (gradeCost > 0) {
+          get().addLedger({
+            delta: -gradeCost,
+            reason: batch ? "batch_grade" : "grade",
+            refId: listingId,
+            note: batch ? "batch natural grade" : "natural grade",
+          });
+        }
+        if (skyCost > 0) {
+          get().addLedger({
+            delta: -skyCost,
+            reason: "sky_polish",
+            refId: listingId,
+            note: "sky polish (MLS disclose)",
+          });
+        }
+        return true;
+      },
+
+      refundGradeJob: (gradeCost, skyCost, listingId, note) => {
+        const total = gradeCost + skyCost;
+        if (total <= 0) return;
+        get().addLedger({
+          delta: total,
+          reason: "correction",
+          refId: listingId,
+          note: note ?? "grade failed — refund",
+        });
+      },
 
       markOhPackBought: (listingId) =>
         set((s) => ({
@@ -259,6 +361,28 @@ export const useAppStore = create<AppState>()(
       gradeCostForSelection: (photoIds, batch) => {
         if (!batch) return photoIds.length * BURN.grade;
         return batchGradeCost(photoIds.length);
+      },
+
+      burnFlyerJob: (cost, listingId, pack, note) => {
+        if (cost <= 0) return true;
+        if (!get().canAfford(cost)) return false;
+        get().addLedger({
+          delta: -cost,
+          reason: pack ? "open_house_pack" : "flyer",
+          refId: listingId,
+          note: note ?? (pack ? "open-house pack" : "flyer generate"),
+        });
+        return true;
+      },
+
+      refundFlyerJob: (cost, listingId, note) => {
+        if (cost <= 0) return;
+        get().addLedger({
+          delta: cost,
+          reason: "correction",
+          refId: listingId,
+          note: note ?? "flyer failed — refund",
+        });
       },
     }),
     {

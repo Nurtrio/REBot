@@ -14,6 +14,7 @@ import {
 import { useAppStore } from "@/store/app-store";
 import { runGrade } from "@/lib/grade";
 import { BURN } from "@/data/plans";
+import type { RoomType } from "@/types";
 
 export default function GradePage() {
   const params = useParams();
@@ -22,34 +23,36 @@ export default function GradePage() {
   const photos = useAppStore((s) => s.getPhotos(id));
   const balance = useAppStore((s) => s.balance());
   const canAfford = useAppStore((s) => s.canAfford);
-  const burn = useAppStore((s) => s.burn);
+  const burnGradeJob = useAppStore((s) => s.burnGradeJob);
+  const refundGradeJob = useAppStore((s) => s.refundGradeJob);
   const markGraded = useAppStore((s) => s.markGraded);
+  const rejectGrade = useAppStore((s) => s.rejectGrade);
   const costFn = useAppStore((s) => s.gradeCostForSelection);
 
-  const selectable = photos.filter(
-    (p) => p.status === "selected" || p.status === "graded"
-  );
   const toGrade = photos.filter((p) => p.status === "selected");
+  const graded = photos.filter((p) => p.status === "graded");
 
   const [mode, setMode] = useState<"single" | "batch">("batch");
   const [activeId, setActiveId] = useState(
-    toGrade[0]?.id ?? selectable[0]?.id ?? photos[0]?.id
+    toGrade[0]?.id ?? graded[0]?.id ?? photos[0]?.id
   );
   const [slider, setSlider] = useState(65);
   const [skyPolish, setSkyPolish] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [doneIds, setDoneIds] = useState<string[]>([]);
+  const [lastModels, setLastModels] = useState<string[]>([]);
 
   const active = photos.find((p) => p.id === activeId) ?? photos[0];
 
   const targets = useMemo(() => {
     if (mode === "batch") return toGrade.map((p) => p.id);
-    return active ? [active.id] : [];
+    return active && active.status === "selected" ? [active.id] : [];
   }, [mode, toGrade, active]);
 
-  const baseCost = costFn(targets, mode === "batch");
-  const cost = baseCost + (skyPolish ? targets.length * BURN.skyPolish : 0);
+  const gradeCost = costFn(targets, mode === "batch");
+  const skyCost = skyPolish ? targets.length * BURN.skyPolish : 0;
+  const cost = gradeCost + skyCost;
 
   async function confirmGrade() {
     setMsg(null);
@@ -61,37 +64,91 @@ export default function GradePage() {
       setMsg("Out of credits. Top up to finish this listing.");
       return;
     }
+
+    // Reserve / burn first — never grade then fail to charge
+    const reserved = burnGradeJob(gradeCost, skyCost, id, mode === "batch");
+    if (!reserved) {
+      setMsg("Could not reserve credits.");
+      return;
+    }
+
     setBusy(true);
     try {
+      const rooms: Record<string, RoomType> = {};
+      const sources: Record<string, string | undefined> = {};
+      targets.forEach((pid) => {
+        const p = photos.find((x) => x.id === pid);
+        if (p) {
+          rooms[pid] = p.room;
+          sources[pid] = p.dataUrl;
+        }
+      });
+
       const results = await runGrade({
         photoIds: targets,
         mode,
         skyPolish,
+        rooms,
+        sources,
       });
-      const ok = burn(
-        cost,
-        mode === "batch" ? "batch_grade" : "grade",
-        id,
-        skyPolish ? "grade + sky polish" : "natural grade"
-      );
-      if (!ok) {
-        setMsg("Could not burn credits.");
+
+      const okResults = results.filter((r) => r.ok);
+      const failResults = results.filter((r) => !r.ok);
+
+      if (failResults.length === results.length) {
+        refundGradeJob(gradeCost, skyCost, id, "all grades failed — refund");
+        setMsg("Grade failed — credits refunded.");
         return;
       }
+
+      if (failResults.length > 0) {
+        const failN = failResults.length;
+        const perGrade = gradeCost / Math.max(targets.length, 1);
+        const perSky = skyCost / Math.max(targets.length, 1);
+        refundGradeJob(
+          Math.ceil(perGrade * failN),
+          Math.ceil(perSky * failN),
+          id,
+          `${failN} frame(s) failed — partial refund`
+        );
+      }
+
       const keys: Record<string, string> = {};
-      results.forEach((r) => {
+      const urls: Record<string, string> = {};
+      const models: Record<string, string> = {};
+      okResults.forEach((r) => {
         keys[r.photoId] = r.gradedThumbKey;
+        if (r.gradedDataUrl) urls[r.photoId] = r.gradedDataUrl;
+        models[r.photoId] = r.model;
       });
-      markGraded(targets, keys);
-      setDone(true);
+      markGraded(okResults.map((r) => r.photoId), keys, {
+        gradedDataUrls: urls,
+        models,
+        skyPolished: skyPolish,
+        listingId: id,
+      });
+      setDoneIds(okResults.map((r) => r.photoId));
+      setLastModels(Array.from(new Set(okResults.map((r) => r.model))));
+      if (okResults[0]) setActiveId(okResults[0].photoId);
       setMsg(
         skyPolish
-          ? "Graded with sky polish — disclose on MLS."
-          : "Natural grade applied. Architecture preserved."
+          ? "Graded with sky polish — MLS disclosure flagged on listing."
+          : `Natural grade applied (${Array.from(new Set(okResults.map((r) => r.model))).join(", ")}). Architecture preserved.`
       );
+    } catch {
+      refundGradeJob(gradeCost, skyCost, id, "grade crashed — refund");
+      setMsg("Grade crashed — credits refunded.");
     } finally {
       setBusy(false);
     }
+  }
+
+  function onRejectRedo() {
+    const ids = doneIds.length ? doneIds : graded.map((p) => p.id);
+    if (!ids.length) return;
+    rejectGrade(ids);
+    setDoneIds([]);
+    setMsg("Rejected — frames back in Selected for redo. Credits stay burned (re-grade will charge again).");
   }
 
   if (!listing) {
@@ -103,6 +160,10 @@ export default function GradePage() {
     );
   }
 
+  const beforeUrl = active?.dataUrl;
+  const afterUrl = active?.gradedDataUrl;
+  const showAfter = !!afterUrl || active?.status === "graded";
+
   return (
     <main>
       <ScreenHeader
@@ -113,6 +174,12 @@ export default function GradePage() {
       />
 
       <div className="px-4 py-4 space-y-5">
+        {listing.mlsDisclosure ? (
+          <div className="rounded-fw border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+            MLS disclosure: sky polish used on one or more frames in this listing.
+          </div>
+        ) : null}
+
         <div className="flex gap-2">
           {(
             [
@@ -141,30 +208,27 @@ export default function GradePage() {
             <div className="relative aspect-[4/3] overflow-hidden rounded-fw border border-line">
               <PhotoThumb
                 thumbKey={active.thumbKey}
+                dataUrl={beforeUrl}
                 className="absolute inset-0 h-full w-full"
               />
-              <div
-                className="absolute inset-0 overflow-hidden"
-                style={{ width: `${slider}%` }}
-              >
-                <PhotoThumb
-                  thumbKey={active.gradedThumbKey ?? active.thumbKey}
-                  graded
-                  className="h-full"
-                  // force width of parent container sense — use fixed aspect box width
-                />
-                {/* widen graded layer */}
+              {showAfter ? (
                 <div
-                  className="absolute inset-y-0 left-0"
-                  style={{ width: `${10000 / Math.max(slider, 1)}%` }}
+                  className="absolute inset-0 overflow-hidden"
+                  style={{ width: `${slider}%` }}
                 >
-                  <PhotoThumb
-                    thumbKey={`graded-preview-${active.thumbKey}`}
-                    graded
-                    className="h-full w-full"
-                  />
+                  <div
+                    className="absolute inset-y-0 left-0 h-full"
+                    style={{ width: `${10000 / Math.max(slider, 1)}%` }}
+                  >
+                    <PhotoThumb
+                      thumbKey={active.gradedThumbKey ?? `graded-${active.thumbKey}`}
+                      dataUrl={afterUrl}
+                      graded
+                      className="h-full w-full"
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : null}
               <div
                 className="absolute inset-y-0 w-0.5 bg-paper"
                 style={{ left: `${slider}%` }}
@@ -184,7 +248,11 @@ export default function GradePage() {
               onChange={(e) => setSlider(Number(e.target.value))}
               className="fw-slider mt-3 w-full"
               aria-label="Before after slider"
+              disabled={!showAfter}
             />
+            {active.gradeModel ? (
+              <p className="mt-1 text-xs text-muted">Model: {active.gradeModel}</p>
+            ) : null}
           </div>
         ) : null}
 
@@ -201,6 +269,7 @@ export default function GradePage() {
               >
                 <PhotoThumb
                   thumbKey={p.thumbKey}
+                  dataUrl={p.gradedDataUrl ?? p.dataUrl}
                   graded={p.status === "graded"}
                   className="h-14 w-14"
                 />
@@ -211,10 +280,7 @@ export default function GradePage() {
           <p className="text-sm text-muted">
             Batching {toGrade.length} selected frame
             {toGrade.length === 1 ? "" : "s"}
-            {toGrade.length > 10
-              ? " · 0.8× after first 10"
-              : ""}
-            .
+            {toGrade.length > 10 ? " · 0.8× after first 10" : ""}.
           </p>
         )}
 
@@ -229,8 +295,9 @@ export default function GradePage() {
             <span className="font-medium text-ink">Sky polish</span>
             <span className="text-muted">
               {" "}
-              (+{BURN.skyPolish} cr / photo) — opt-in only. Adds MLS disclosure
-              flag. Never invents amenities.
+              (+{BURN.skyPolish} cr / photo) — opt-in only. Separate{" "}
+              <code className="text-xs">sky_polish</code> ledger burn + MLS
+              disclosure flag. Never invents amenities.
             </span>
           </span>
         </label>
@@ -240,7 +307,7 @@ export default function GradePage() {
         {msg ? (
           <p
             className={`text-sm ${
-              done ? "text-level" : "text-warn"
+              doneIds.length ? "text-level" : "text-warn"
             }`}
           >
             {msg}
@@ -267,12 +334,30 @@ export default function GradePage() {
           </Button>
         )}
 
-        {done ? (
-          <Link href={`/listings/${id}/gallery`}>
-            <Button variant="secondary" size="lg" className="mt-2">
-              Open gallery
-            </Button>
-          </Link>
+        {doneIds.length > 0 ? (
+          <div className="space-y-2">
+            <SectionLabel>QA</SectionLabel>
+            <p className="text-xs text-muted">
+              Accept keeps graded derivatives
+              {lastModels.length ? ` (${lastModels.join(", ")})` : ""}. Reject
+              returns frames to Selected for redo.
+            </p>
+            <div className="flex gap-2">
+              <Link href={`/listings/${id}/gallery`} className="flex-1">
+                <Button variant="secondary" size="lg" className="w-full">
+                  Accept · gallery
+                </Button>
+              </Link>
+              <Button
+                variant="secondary"
+                size="lg"
+                className="flex-1"
+                onClick={onRejectRedo}
+              >
+                Reject · redo
+              </Button>
+            </div>
+          </div>
         ) : null}
       </div>
     </main>

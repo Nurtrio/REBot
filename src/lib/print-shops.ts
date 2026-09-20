@@ -1,7 +1,6 @@
 /**
- * Print shop finder — Places API when key present; demo fixtures + Maps fallback otherwise.
- * Never invent business names when key is missing for a live ZIP search —
- * DEMO fixtures are explicitly labeled and only used in MVP without a key.
+ * Print shop finder — Places API when key present; labeled demo + Maps fallback otherwise.
+ * Never invent business names for a live ZIP search.
  */
 
 import { DEMO_PRINT_SHOPS } from "@/data/seed";
@@ -20,6 +19,15 @@ export function mapsSearchUrl(zip: string): string {
   )}`;
 }
 
+function sortShops(shops: PrintShop[]): PrintShop[] {
+  return [...shops].sort((a, b) => {
+    if (a.openNow !== b.openNow) return a.openNow ? -1 : 1;
+    if (a.distanceMi !== b.distanceMi) return a.distanceMi - b.distanceMi;
+    return (b.rating ?? 0) - (a.rating ?? 0);
+  });
+}
+
+/** Client entry: hit our API when a Places key exists; else labeled demo fixtures. */
 export async function findPrintShops(
   zip: string,
   radiusMi: 5 | 10 | 25 = 10
@@ -28,13 +36,8 @@ export async function findPrintShops(
   const key = process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY;
 
   if (!key) {
-    // MVP: labeled demo fixtures so UI is reviewable; production shows Maps fallback only.
-    const filtered = DEMO_PRINT_SHOPS.filter((s) => s.distanceMi <= radiusMi).sort(
-      (a, b) => {
-        if (a.openNow !== b.openNow) return a.openNow ? -1 : 1;
-        if (a.distanceMi !== b.distanceMi) return a.distanceMi - b.distanceMi;
-        return (b.rating ?? 0) - (a.rating ?? 0);
-      }
+    const filtered = sortShops(
+      DEMO_PRINT_SHOPS.filter((s) => s.distanceMi <= radiusMi)
     );
     return {
       shops: filtered,
@@ -45,11 +48,37 @@ export async function findPrintShops(
     };
   }
 
-  // Live Places wiring TODO — return empty + fallback until connected
-  return {
-    shops: [],
-    source: "fallback",
-    mapsFallbackUrl,
-    message: "Places search not wired yet. Open Google Maps for live shops.",
-  };
+  try {
+    const res = await fetch(
+      `/api/print-shops?zip=${encodeURIComponent(zip)}&radiusMi=${radiusMi}`
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return {
+        shops: [],
+        source: "fallback",
+        mapsFallbackUrl,
+        message:
+          (body as { message?: string }).message ??
+          "Places search failed. Open Google Maps for live shops.",
+      };
+    }
+    const data = (await res.json()) as {
+      shops: PrintShop[];
+      message?: string;
+    };
+    return {
+      shops: sortShops(data.shops ?? []),
+      source: "places",
+      mapsFallbackUrl,
+      message: data.message,
+    };
+  } catch {
+    return {
+      shops: [],
+      source: "fallback",
+      mapsFallbackUrl,
+      message: "Places search unavailable. Open Google Maps for live shops.",
+    };
+  }
 }

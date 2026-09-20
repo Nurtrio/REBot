@@ -101,6 +101,7 @@ export default function GalleryPage() {
                 </span>
                 <PhotoThumb
                   thumbKey={p.gradedThumbKey ?? p.thumbKey}
+                  dataUrl={p.gradedDataUrl ?? p.dataUrl}
                   graded={p.status === "graded"}
                   className="h-14 w-16 shrink-0 rounded-fw-sm"
                 />
